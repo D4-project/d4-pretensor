@@ -1,0 +1,11 @@
+d4-pretensor
+redisgraph.so
+/db
+/redis
+.pretensor.log
+/infected
+.idea
+pretensor.log
+/logs
+conf.sample/mitm
+conf.sample/tomonitor
