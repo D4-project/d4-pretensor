@@ -125,7 +125,7 @@ func (p *PHit) getBinName() string {
 	return indexes[2]
 }
 
-func(p *PHit) getBinurl() string{
+func(p *PHit) GetBinurl() string{
 	re, _ := regexp.Compile(`(?P<verb>GET|POST|HEAD|DELETE|PUT|UPDATE)\s(?P<command>\/\S*)\s(?P<version>\S*)`)
 	indexes := re.FindStringSubmatch(p.req.line)
 	str := "http://"+p.req.host+indexes[2]
@@ -195,7 +195,7 @@ func (p *PHit) String() string {
 
 func(p *PHit) Curl() string{
 	str := "curl -A \"-\" "
-	str += p.getBinurl()+" -X "+p.getMethod()+" -o "+strings.TrimPrefix(p.getBinName(), "/")+" --create-dirs"
+	str += p.GetBinurl()+" -X "+p.getMethod()+" -o "+strings.TrimPrefix(p.getBinName(), "/")+" --create-dirs"
 	return str
 }
 

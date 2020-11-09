@@ -2,16 +2,20 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"flag"
 	"fmt"
 	"github.com/D4-project/d4-pretensor/pretensorhit"
+	"golang.org/x/net/proxy"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	config "github.com/D4-project/d4-golang-utils/config"
@@ -21,7 +25,6 @@ import (
 )
 
 type (
-	// Input is a grok - NIFI or Logstash
 	redisconfD4 struct {
 		redisHost  string
 		redisPort  string
@@ -39,6 +42,10 @@ var (
 	redisInputPool *redis.Pool
 	tomonitor      [][]byte
 	mitm           [][]byte
+	curls          map[string]string
+	binurls        map[string]*pretensorhit.PHit
+	bashs          map[string]string
+	wg             sync.WaitGroup
 )
 
 func main() {
@@ -124,11 +131,16 @@ func main() {
 	mitm = config.ReadConfigFileLines(*confdir, "mitm")
 
 	// Create a new redis connection pool
-	redisInputPool = newPool(rd4.redisHost+":"+rd4.redisPort, 16)
+	redisInputPool = newPool(rd4.redisHost+":"+rd4.redisPort, 200)
 	redisConn, err = redisInputPool.Dial()
 	if err != nil {
 		logger.Fatal("Could not connect to d4 Redis")
 	}
+
+	// Init maps
+	curls = make(map[string]string)
+	bashs = make(map[string]string)
+	binurls = make(map[string]*pretensorhit.PHit)
 
 	// Init redis graph
 	graph := rg.GraphNew("pretensor", redisConn)
@@ -207,22 +219,33 @@ func main() {
 
 						// If the bot downloaded a binary
 						if tmp.GetContenttype() == "application/octet-stream" && tmp.GetStatus() == "200" {
+							// Logging all bash scripts and curl commands to downlaod binaries
+							if strings.Contains(fmt.Sprintf("%v", tmp.GetBody()), "ELF") {
+								tmpsha256 := sha256.Sum256([]byte(tmp.Curl()))
+								curls[fmt.Sprintf("%x", tmpsha256)] = tmp.Curl()
+								tmpsha256b := sha256.Sum256([]byte(tmp.GetBinurl()))
+								binurls[fmt.Sprintf("%x", tmpsha256b)] = tmp
+
+							} else {
+								tmpsha256 := sha256.Sum256([]byte(tmp.GetBody()))
+								bashs[fmt.Sprintf("%x", tmpsha256)] = tmp.GetBody()
+							}
 							// Create binary if not exist
-							query := `MATCH (bin:Binary` + tmp.GetBinaryMatchQuerySelector() + `) RETURN bin`
-							result, err := graph.Query(query)
+							query := `MATCH (bin` + tmp.GetBinaryMatchQuerySelector() + `) RETURN bin`
+							// The following is causing a panic -- it looks like a redigo issue
+							//query := `MATCH (bin:Binary` + tmp.GetBinaryMatchQuerySelector() + `) RETURN bin`
+							qres, err := graph.Query(query)
 							if err != nil {
 								fmt.Println(err)
 							}
-							if result.Empty() {
+							if qres.Empty() {
 								//fmt.Println("Add binary: "+tmp.GetBinaryMatchQuerySelector())
-								fmt.Println(tmp.Curl())
 								graph.AddNode(tmp.GetBinaryNode())
-								_ , err := graph.Flush()
+								_, err := graph.Flush()
 								if err != nil {
 									fmt.Println(err)
 								}
 							}
-
 							// Use Merge to create the relationship bot, binaries and CC
 							query = `MATCH (b:Bot {ip:"` + tmp.GetIp() + `"})
 								MATCH (c:CC {host:"` + tmp.GetHost() + `"})
@@ -245,6 +268,84 @@ func main() {
 	if err != nil {
 		log.Println(err)
 	}
+
+	// Gathering Binaries ourselves
+	for _, v := range binurls {
+		wg.Add(1)
+		// Go fetch the binary
+		go func(vi *pretensorhit.PHit) {
+			logger.Println("Fetching " + vi.GetBinurl())
+			defer wg.Done()
+			// create a socks5 dialer
+			dialer, err := proxy.SOCKS5("tcp", "127.0.0.1:9050", nil, proxy.Direct)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "can't connect to the proxy:", err)
+				os.Exit(1)
+			}
+			// setup a http client
+			httpTransport := &http.Transport{}
+			httpClient := &http.Client{Transport: httpTransport}
+			// set our socks5 as the dialer
+			httpTransport.Dial = dialer.Dial
+			// create a request
+			req, err := http.NewRequest("GET", vi.GetBinurl(), nil)
+			req.Header.Set("User-Agent", "-")
+			if err != nil {
+				logger.Println(os.Stderr, "can't create request:", err)
+			}
+			// use the http client to fetch the page
+			resp, err := httpClient.Do(req)
+			if err != nil {
+				logger.Println(os.Stderr, "can't GET page:", err)
+			}
+			defer resp.Body.Close()
+			b, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				logger.Println(os.Stderr, "error reading body:", err)
+			}
+			tmpb := sha256.Sum256(b)
+			err = ioutil.WriteFile("./infected/"+fmt.Sprintf("%x", tmpb), b, 0644)
+			if err != nil {
+				logger.Println(err)
+			}
+
+			// Add binary's hash to the graph
+			query := `MATCH (b:Bot {ip:"` + vi.GetIp() + `"})
+					MATCH (c:CC {host:"` + vi.GetHost() + `"})
+					MATCH (bin:Binary ` + vi.GetBinaryMatchQuerySelector() + `)
+					SET bin.sha256="` + fmt.Sprintf("%x", tmpb) + `"`
+			fmt.Println(query)
+			_, err = graph.Query(query)
+			if err != nil {
+				logger.Println(err)
+			}
+		}(v)
+	}
+
+	// Before leaving write interesting data gathered to files
+	for _, v := range curls {
+		f, err := os.OpenFile("./infected/curl.sh", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			logger.Println(err)
+		}
+		if _, err := f.Write([]byte(fmt.Sprintf("%v\n", v))); err != nil {
+			f.Close()
+			logger.Println(err)
+		}
+		if err := f.Close(); err != nil {
+			logger.Println(err)
+		}
+	}
+
+	for k, v := range bashs {
+		err := ioutil.WriteFile("./infected/"+k, []byte(v), 0644)
+		if err != nil {
+			logger.Println(err)
+		}
+	}
+
+	// Waiting for the binary fetchin routines
+	wg.Wait()
 
 	logger.Println("Exiting")
 }
