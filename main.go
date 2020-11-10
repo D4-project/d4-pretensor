@@ -44,7 +44,7 @@ var (
 	mitm           [][]byte
 	curls          map[string]string
 	binurls        map[string]*pretensorhit.PHit
-	bashs          map[string]string
+	bashs          map[string]*pretensorhit.PHit
 	wg             sync.WaitGroup
 )
 
@@ -139,7 +139,7 @@ func main() {
 
 	// Init maps
 	curls = make(map[string]string)
-	bashs = make(map[string]string)
+	bashs = make(map[string]*pretensorhit.PHit)
 	binurls = make(map[string]*pretensorhit.PHit)
 
 	// Init redis graph
@@ -228,7 +228,7 @@ func main() {
 
 							} else {
 								tmpsha256 := sha256.Sum256([]byte(tmp.GetBody()))
-								bashs[fmt.Sprintf("%x", tmpsha256)] = tmp.GetBody()
+								bashs[fmt.Sprintf("%x", tmpsha256)] = tmp
 							}
 							// Create binary if not exist
 							query := `MATCH (bin` + tmp.GetBinaryMatchQuerySelector() + `) RETURN bin`
@@ -314,7 +314,6 @@ func main() {
 					MATCH (c:CC {host:"` + vi.GetHost() + `"})
 					MATCH (bin:Binary ` + vi.GetBinaryMatchQuerySelector() + `)
 					SET bin.sha256="` + fmt.Sprintf("%x", tmpb) + `"`
-			fmt.Println(query)
 			_, err = graph.Query(query)
 			if err != nil {
 				logger.Println(err)
@@ -322,7 +321,24 @@ func main() {
 		}(v)
 	}
 
-	// Before leaving write interesting data gathered to files
+	// Write non-ELF to files and had hashed to the graph
+	for k, v := range bashs {
+		// Add binary's hash to the graph
+		query := `MATCH (b:Bot {ip:"` + v.GetIp() + `"})
+					MATCH (c:CC {host:"` + v.GetHost() + `"})
+					MATCH (bin:Binary ` + v.GetBinaryMatchQuerySelector() + `)
+					SET bin.sha256="` +  k + `"`
+		_, err = graph.Query(query)
+		if err != nil {
+			logger.Println(err)
+		}
+		err := ioutil.WriteFile("./infected/"+k, []byte(v.GetBody()), 0644)
+		if err != nil {
+			logger.Println(err)
+		}
+	}
+
+	// Write curl commands to a file
 	for _, v := range curls {
 		f, err := os.OpenFile("./infected/curl.sh", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
@@ -333,13 +349,6 @@ func main() {
 			logger.Println(err)
 		}
 		if err := f.Close(); err != nil {
-			logger.Println(err)
-		}
-	}
-
-	for k, v := range bashs {
-		err := ioutil.WriteFile("./infected/"+k, []byte(v), 0644)
-		if err != nil {
 			logger.Println(err)
 		}
 	}
