@@ -172,6 +172,7 @@ func main() {
 						tmp.SetTimestamp(gj.Get(contents, "transaction.time"))
 						tmp.SetIp(gj.Get(contents, "transaction.remote_address"))
 						tmp.SetLine(gj.Get(contents, "request.request_line"))
+						tmp.SetReferer(gj.Get(contents, "request.headers.Referer"))
 						tmp.SetUseragent(gj.Get(contents, "request.headers.User-Agent"))
 						tmp.SetStatus(gj.Get(contents, "response.status"))
 						tmp.SetBody(gj.Get(contents, "response.body"))
@@ -258,6 +259,7 @@ func main() {
 							}
 						}
 
+						fmt.Println(tmp)
 						// We treated the request
 						break
 					}
@@ -268,6 +270,8 @@ func main() {
 	if err != nil {
 		log.Println(err)
 	}
+
+	os.Exit(0)
 
 	// Gathering Binaries ourselves
 	for _, v := range binurls {
@@ -314,6 +318,7 @@ func main() {
 					MATCH (c:CC {host:"` + vi.GetHost() + `"})
 					MATCH (bin:Binary ` + vi.GetBinaryMatchQuerySelector() + `)
 					SET bin.sha256="` + fmt.Sprintf("%x", tmpb) + `"`
+			fmt.Println(query)
 			_, err = graph.Query(query)
 			if err != nil {
 				logger.Println(err)
@@ -327,7 +332,8 @@ func main() {
 		query := `MATCH (b:Bot {ip:"` + v.GetIp() + `"})
 					MATCH (c:CC {host:"` + v.GetHost() + `"})
 					MATCH (bin:Binary ` + v.GetBinaryMatchQuerySelector() + `)
-					SET bin.sha256="` +  k + `"`
+					SET bin.sha256="` + k + `"`
+		fmt.Println(query)
 		_, err = graph.Query(query)
 		if err != nil {
 			logger.Println(err)
