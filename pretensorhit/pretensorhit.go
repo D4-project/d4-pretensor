@@ -7,6 +7,7 @@ import (
 	rg "github.com/redislabs/redisgraph-go"
 	gj "github.com/tidwall/gjson"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -42,18 +43,20 @@ type (
 		hostname    string
 		fingerprint string
 		command     string
+		rawcommand  string
 	}
 
 	graph struct {
 		bot rg.Node
 		bin rg.Node
+		cmd rg.Node
 		cc  rg.Node
 		rel rg.Edge
 	}
 )
 
 func (p *PHit) SetReferer(in gj.Result) {
-	if in.String() != ""{
+	if in.String() != "" {
 		p.req.referer = in.String()
 		p.extractRefererFields()
 	}
@@ -62,6 +65,30 @@ func (p *PHit) SetReferer(in gj.Result) {
 
 func (p *PHit) GetReferer() string {
 	return p.req.referer
+}
+
+func (p *PHit) GetCmdRawCommand() string {
+	return p.cmd.rawcommand
+}
+
+func (p *PHit) GetCmdDecodedCommand() string {
+	return p.cmd.command
+}
+
+func (p *PHit) GetCmdUser() string {
+	return p.cmd.user
+}
+
+func (p *PHit) GetCmdHostname() string {
+	return p.cmd.hostname
+}
+
+func (p *PHit) GetCmdFingerprint() string {
+	return p.cmd.fingerprint
+}
+
+func (p *PHit) GetCmdArchitecture() string {
+	return p.cmd.arch
 }
 
 func (p *PHit) SetTimestamp(in gj.Result) {
@@ -201,6 +228,17 @@ func (p *PHit) GetBinaryNode() *rg.Node {
 	return &p.g.bin
 }
 
+func (p *PHit) GetCommandNode() *rg.Node {
+	p.g.cmd = rg.Node{
+		Label: "Command",
+		Properties: map[string]interface{}{
+			"content":    strconv.Quote(p.GetCmdDecodedCommand()),
+			"rawcontent": p.GetCmdRawCommand(),
+		},
+	}
+	return &p.g.cmd
+}
+
 func (p *PHit) String() string {
 	var buf bytes.Buffer
 	buf.WriteString(fmt.Sprintf("---------------HIT START-------------------\n"))
@@ -214,7 +252,7 @@ func (p *PHit) String() string {
 	buf.WriteString(fmt.Sprintf("Response content-type: %v\n", p.res.contenttype))
 	buf.WriteString(fmt.Sprintf("Response length: %v\n", p.res.length))
 	buf.WriteString(fmt.Sprintf("Response body: %v\n", p.res.body))
-	if ((p.cmd.ip == p.req.ip) || (p.cmd.hostname != "") || (p.cmd.fingerprint != "") || (p.cmd.hostname != "") || (p.cmd.user != "") || (len(p.cmd.command) > 0)) {
+	if (p.cmd.ip == p.req.ip) || (p.cmd.hostname != "") || (p.cmd.fingerprint != "") || (p.cmd.hostname != "") || (p.cmd.user != "") || (len(p.cmd.command) > 0) {
 		buf.WriteString(fmt.Sprintf("Bot user: %v\n", p.cmd.user))
 		buf.WriteString(fmt.Sprintf("Bot arch: %v\n", p.cmd.arch))
 		buf.WriteString(fmt.Sprintf("Bot hostname: %v\n", p.cmd.hostname))
@@ -242,5 +280,6 @@ func (p *PHit) extractRefererFields() {
 		p.cmd.fingerprint = indexes[5]
 		data, _ := base64.StdEncoding.DecodeString(indexes[6])
 		p.cmd.command = string(data)
+		p.cmd.rawcommand = indexes[6]
 	}
 }

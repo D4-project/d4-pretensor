@@ -259,6 +259,46 @@ func main() {
 							}
 						}
 
+						// Bot set a referer command
+						if tmp.GetCmdRawCommand() != "" {
+							// First we update what we know about this bot
+							query = `MATCH (b:Bot {ip:"` + tmp.GetIp() + `"})
+								MATCH (c:CC {host:"` + tmp.GetHost() + `"})
+								SET b.user="` + tmp.GetCmdUser() + `"
+								SET b.hostname="` + tmp.GetCmdHostname() + `"
+								SET b.fingerprint="` + tmp.GetCmdFingerprint() + `"
+								SET b.architecture="` + tmp.GetCmdArchitecture() + `"`
+							result, err = graph.Query(query)
+							if err != nil {
+								fmt.Println(err)
+							}
+
+							// Then we create a command node for this command
+							query = `MATCH (c:Command {rawcontent:"` + tmp.GetCmdRawCommand() + `"}) RETURN c.content`
+							result, err = graph.Query(query)
+							if err != nil {
+								fmt.Println(err)
+							}
+							if result.Empty() {
+								graph.AddNode(tmp.GetCommandNode())
+								_, err := graph.Flush()
+								if err != nil {
+									fmt.Println(err)
+								}
+							}
+
+							// Finally we tie the Bot and the issued Command
+							query = `MATCH (b:Bot {ip:"` + tmp.GetIp() + `"})
+								MATCH (c:CC {host:"` + tmp.GetHost() + `"})
+								MATCH (co:Command {rawcontent:"` + tmp.GetCmdRawCommand() + `"})
+								MERGE (b)-[e:execute {name: "execute"}]->(co)
+								MERGE (c)-[l:launch {name: "launch"}]->(co)`
+							result, err = graph.Query(query)
+							if err != nil {
+								fmt.Println(err)
+							}
+						}
+
 						fmt.Println(tmp)
 						// We treated the request
 						break
