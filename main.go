@@ -131,7 +131,7 @@ func main() {
 	mitm = config.ReadConfigFileLines(*confdir, "mitm")
 
 	// Create a new redis connection pool
-	redisInputPool = newPool(rd4.redisHost+":"+rd4.redisPort, 200)
+	redisInputPool = newPool(rd4.redisHost+":"+rd4.redisPort, 400)
 	redisConn, err = redisInputPool.Dial()
 	if err != nil {
 		logger.Fatal("Could not connect to d4 Redis")
@@ -314,8 +314,6 @@ func main() {
 		log.Println(err)
 	}
 
-	os.Exit(0)
-
 	// Gathering Binaries ourselves
 	for _, v := range binurls {
 		wg.Add(1)
@@ -356,32 +354,42 @@ func main() {
 				logger.Println(err)
 			}
 
-			// Add binary's hash to the graph
+			// Update the Go object with this sha
+			vi.SetSha256(fmt.Sprintf("%x", tmpb))
+
+			fmt.Printf("Not empty, we Create a new relationship for: %v ", vi.GetSha256())
 			query := `MATCH (b:Bot {ip:"` + vi.GetIp() + `"})
-					MATCH (c:CC {host:"` + vi.GetHost() + `"})
-					MATCH (bin:Binary ` + vi.GetBinaryMatchQuerySelector() + `)
-					SET bin.sha256="` + fmt.Sprintf("%x", tmpb) + `"`
+								MATCH (c:CC {host:"` + vi.GetHost() + `"})
+								MERGE (bin:Binary ` + vi.GetBinaryMergeSelector() + `)
+								MERGE (b)-[d:download {name: "download"}]->(bin)
+								MERGE (c)-[h:host {name: "host"}]->(bin)`
 			fmt.Println(query)
-			_, err = graph.Query(query)
+			result, err := graph.Query(query)
+			fmt.Println(result)
 			if err != nil {
-				logger.Println(err)
+				fmt.Println(err)
 			}
 		}(v)
 	}
 
 	// Write non-ELF to files and had hashed to the graph
 	for k, v := range bashs {
+		// Set Sha 256 hash to the object
+		v.SetSha256(k)
 		// Add binary's hash to the graph
 		query := `MATCH (b:Bot {ip:"` + v.GetIp() + `"})
-					MATCH (c:CC {host:"` + v.GetHost() + `"})
-					MATCH (bin:Binary ` + v.GetBinaryMatchQuerySelector() + `)
-					SET bin.sha256="` + k + `"`
+ 				  MATCH (c:CC {host:"` + v.GetHost() + `"})
+				  MERGE (bin:Binary ` + v.GetBinaryMergeSelector() + `)
+				  MERGE (b)-[d:download {name: "download"}]->(bin)
+				  MERGE (c)-[h:host {name: "host"}]->(bin)`
+
 		fmt.Println(query)
-		_, err = graph.Query(query)
+		result, err := graph.Query(query)
 		if err != nil {
 			logger.Println(err)
 		}
-		err := ioutil.WriteFile("./infected/"+k, []byte(v.GetBody()), 0644)
+		fmt.Println(result)
+		err = ioutil.WriteFile("./infected/"+k, []byte(v.GetBody()), 0644)
 		if err != nil {
 			logger.Println(err)
 		}

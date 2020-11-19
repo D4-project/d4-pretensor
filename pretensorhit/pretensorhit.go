@@ -34,6 +34,7 @@ type (
 		body        string
 		contenttype string
 		length      string
+		sha256      string
 	}
 
 	command struct {
@@ -65,6 +66,15 @@ func (p *PHit) SetReferer(in gj.Result) {
 
 func (p *PHit) GetReferer() string {
 	return p.req.referer
+}
+
+func (p *PHit) GetSha256() string {
+	return p.res.sha256
+}
+
+func (p *PHit) SetSha256(in string) {
+	p.res.sha256 = in
+	return
 }
 
 func (p *PHit) GetCmdRawCommand() string {
@@ -215,14 +225,21 @@ func (p *PHit) GetBinaryMatchQuerySelector() string {
 	return "{size:\"" + p.res.length + "\", binname:\"" + p.getBinName() + "\"}"
 }
 
+func (p *PHit) GetBinaryMatchSha256Selector() string {
+	return "{sha256:\"" + p.res.sha256 + "\"}"
+}
+
+func (p *PHit) GetBinaryMergeSelector() string {
+	return "{sha256:\"" + p.res.sha256 + "\", size:\"" + p.res.length + "\", binname:\"" + p.getBinName() + "\"}"
+}
+
 func (p *PHit) GetBinaryNode() *rg.Node {
 	p.g.bin = rg.Node{
 		Label: "Binary",
 		Properties: map[string]interface{}{
-			"size":     p.res.length,
-			"lastseen": p.req.timestamp,
-			"binname":  p.getBinName(),
-			"method":   p.getMethod(),
+			"size":    p.res.length,
+			"binname": p.getBinName(),
+			"sha256":  p.GetSha256(),
 		},
 	}
 	return &p.g.bin

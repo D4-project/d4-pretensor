@@ -5,6 +5,7 @@ go 1.15
 require (
 	github.com/D4-project/d4-golang-utils v0.1.8
 	github.com/gomodule/redigo v2.0.0+incompatible
+	github.com/google/certificate-transparency-go v1.1.1 // indirect
 	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/olekukonko/tablewriter v0.0.4 // indirect
 	github.com/redislabs/redisgraph-go v2.0.2+incompatible
