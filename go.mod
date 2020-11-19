@@ -9,7 +9,7 @@ require (
 	github.com/olekukonko/tablewriter v0.0.4 // indirect
 	github.com/redislabs/redisgraph-go v2.0.2+incompatible
 	github.com/stretchr/testify v1.6.1 // indirect
-	github.com/tidwall/gjson v1.6.1
+	github.com/tidwall/gjson v1.6.3
 	github.com/tidwall/match v1.0.2 // indirect
-	golang.org/x/net v0.0.0-20201031054903-ff519b6c9102
+	golang.org/x/net v0.0.0-20201110031124-69a78807bb2b
 )

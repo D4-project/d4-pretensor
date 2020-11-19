@@ -252,12 +252,22 @@ func (p *PHit) String() string {
 	buf.WriteString(fmt.Sprintf("Response content-type: %v\n", p.res.contenttype))
 	buf.WriteString(fmt.Sprintf("Response length: %v\n", p.res.length))
 	buf.WriteString(fmt.Sprintf("Response body: %v\n", p.res.body))
+
+	// We avoid outputing REDIS rdb files
+	storecommand := p.cmd.rawcommand
+	if len(p.cmd.command) > 4 {
+		fmt.Println([]byte(p.cmd.command)[:4])
+		if res := bytes.Compare([]byte(p.cmd.command)[:5], []byte{'R', 'E', 'D', 'I', 'S'}); res != 0 {
+			storecommand = p.cmd.command
+		}
+	}
+
 	if (p.cmd.ip == p.req.ip) || (p.cmd.hostname != "") || (p.cmd.fingerprint != "") || (p.cmd.hostname != "") || (p.cmd.user != "") || (len(p.cmd.command) > 0) {
 		buf.WriteString(fmt.Sprintf("Bot user: %v\n", p.cmd.user))
 		buf.WriteString(fmt.Sprintf("Bot arch: %v\n", p.cmd.arch))
 		buf.WriteString(fmt.Sprintf("Bot hostname: %v\n", p.cmd.hostname))
 		buf.WriteString(fmt.Sprintf("Bot fingerprint: %v\n", p.cmd.fingerprint))
-		buf.WriteString(fmt.Sprintf("Bot command: %v\n", p.cmd.command))
+		buf.WriteString(fmt.Sprintf("Bot command: %v\n", storecommand))
 	}
 	buf.WriteString(fmt.Sprintf("---------------HIT END--------------------\n"))
 	return buf.String()

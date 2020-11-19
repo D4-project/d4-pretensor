@@ -158,6 +158,9 @@ func main() {
 				if err != nil {
 					return err
 				}
+				if len(content) == 0 {
+					return filepath.SkipDir
+				}
 				// Load JSON
 				contents := string(content)
 				if !gj.Valid(contents) {
