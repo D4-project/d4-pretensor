@@ -39,6 +39,7 @@ var (
 	buf            bytes.Buffer
 	logger         = log.New(&buf, "INFO: ", log.Lshortfile)
 	redisConn      redis.Conn
+	redisGR        redis.Conn
 	redisInputPool *redis.Pool
 	tomonitor      [][]byte
 	mitm           [][]byte
@@ -319,6 +320,11 @@ func main() {
 		wg.Add(1)
 		// Go fetch the binary
 		go func(vi *pretensorhit.PHit) {
+			redisGR, err = redisInputPool.Dial()
+			if err != nil {
+				logger.Fatal("Could not connect routine to d4 Redis")
+			}
+			graphGR := rg.GraphNew("pretensor", redisGR)
 			logger.Println("Fetching " + vi.GetBinurl())
 			defer wg.Done()
 			// create a socks5 dialer
@@ -342,6 +348,7 @@ func main() {
 			resp, err := httpClient.Do(req)
 			if err != nil {
 				logger.Println(os.Stderr, "can't GET page:", err)
+				return
 			}
 			defer resp.Body.Close()
 			b, err := ioutil.ReadAll(resp.Body)
@@ -364,7 +371,9 @@ func main() {
 								MERGE (b)-[d:download {name: "download"}]->(bin)
 								MERGE (c)-[h:host {name: "host"}]->(bin)`
 			fmt.Println(query)
-			result, err := graph.Query(query)
+			logger.Println(query)
+			result, err := graphGR.Query(query)
+			logger.Println(result)
 			fmt.Println(result)
 			if err != nil {
 				fmt.Println(err)
