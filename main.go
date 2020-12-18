@@ -36,6 +36,7 @@ type (
 var (
 	confdir        = flag.String("c", "conf.sample", "configuration directory")
 	folder         = flag.String("log_folder", "logs", "folder containing mod security logs")
+	debug          = flag.Bool("d", false, "debug output")
 	buf            bytes.Buffer
 	logger         = log.New(&buf, "INFO: ", log.Lshortfile)
 	redisConn      redis.Conn
@@ -56,6 +57,10 @@ func main() {
 		log.Fatalf("error opening file: %v", err)
 	}
 
+	// Create infected folder if not exist
+	if _, err := os.Stat("infected"); os.IsNotExist(err) {
+		os.Mkdir("infected", 0660)
+	}
 	defer f.Close()
 	logger.SetOutput(f)
 	logger.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -303,7 +308,9 @@ func main() {
 							}
 						}
 
-						fmt.Println(tmp)
+						if *debug {
+							fmt.Println(tmp)
+						}
 						// We treated the request
 						break
 					}
@@ -419,7 +426,7 @@ func main() {
 		}
 	}
 
-	// Waiting for the binary fetchin routines
+	// Waiting for the binary fetching routines
 	wg.Wait()
 
 	logger.Println("Exiting")
