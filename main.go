@@ -18,36 +18,53 @@ import (
 	"sync"
 	"time"
 
-	config "github.com/D4-project/d4-golang-utils/config"
+	"github.com/D4-project/d4-golang-utils/config"
 	"github.com/gomodule/redigo/redis"
 	rg "github.com/redislabs/redisgraph-go"
 	gj "github.com/tidwall/gjson"
 )
 
 type (
-	redisconfD4 struct {
-		redisHost  string
-		redisPort  string
-		redisGraph string
+	redisconf struct {
+		redisHost    string
+		redisPort    string
+		databasename string
+	}
+
+	binurl struct {
+		url  string
+		phit *pretensorhit.PHit
+	}
+
+	filedesc struct {
+		path string
+		info os.FileInfo
 	}
 )
 
 // Setting up Flags and other Vars
 var (
-	confdir        = flag.String("c", "conf.sample", "configuration directory")
-	folder         = flag.String("log_folder", "logs", "folder containing mod security logs")
-	debug          = flag.Bool("d", false, "debug output")
-	buf            bytes.Buffer
-	logger         = log.New(&buf, "INFO: ", log.Lshortfile)
-	redisConn      redis.Conn
-	redisGR        redis.Conn
-	redisInputPool *redis.Pool
-	tomonitor      [][]byte
-	mitm           [][]byte
-	curls          map[string]string
-	binurls        map[string]*pretensorhit.PHit
-	bashs          map[string]*pretensorhit.PHit
-	wg             sync.WaitGroup
+	confdir            = flag.String("c", "conf.sample", "configuration directory")
+	folder             = flag.String("log_folder", "logs", "folder containing mod security logs")
+	debug              = flag.Bool("d", false, "debug output")
+	buf                bytes.Buffer
+	logger             = log.New(&buf, "INFO: ", log.Lshortfile)
+	redisConn          redis.Conn
+	redisGR            redis.Conn
+	redisPretensorPool *redis.Pool
+	redisd4Pool        *redis.Pool
+	redisd4Queue       string
+	tomonitor          [][]byte
+	mitm               [][]byte
+	curls              map[string]string
+	// Keeps a map of url/hash to keep track of what we downloaded already
+	binurls     map[string]*pretensorhit.PHit
+	bashs       map[string]*pretensorhit.PHit
+	wg          sync.WaitGroup
+	walk_folder = true
+	binchan     chan binurl
+	filechan    chan filedesc
+	bashchan    chan string
 )
 
 func main() {
@@ -59,7 +76,7 @@ func main() {
 
 	// Create infected folder if not exist
 	if _, err := os.Stat("infected"); os.IsNotExist(err) {
-		os.Mkdir("infected", 0660)
+		os.Mkdir("infected", 0750)
 	}
 	defer f.Close()
 	logger.SetOutput(f)
@@ -80,6 +97,8 @@ func main() {
 	flag.Usage = func() {
 		fmt.Printf("d4 - d4-pretensor\n")
 		fmt.Printf("Parses Mod Security logs into Redis Graph \n")
+		fmt.Printf("from a folder first to bootstrap a redis graph, \n")
+		fmt.Printf("and then from d4 to update it. \n")
 		fmt.Printf("\n")
 		fmt.Printf("Usage: d4-pretensor -c config_directory\n")
 		fmt.Printf("\n")
@@ -88,7 +107,9 @@ func main() {
 		fmt.Printf("specified with the -c command line switch.\n\n")
 		fmt.Printf("Files in the configuration directory\n")
 		fmt.Printf("\n")
-		fmt.Printf("redis_server - host:port/graphname\n")
+		fmt.Printf("redis_pretensor - host:port/graphname\n")
+		fmt.Printf("redis_d4 - host:port/db\n")
+		fmt.Printf("redis_d4_queue - d4 queue to pop\n")
 		fmt.Printf("folder - folder containing mod security logs\n")
 		fmt.Printf("tomonitor - list of requests to monitor (botnet activity)\n")
 		fmt.Printf("mitm - list of mitm proxy to remove\n")
@@ -106,42 +127,72 @@ func main() {
 		*confdir = strings.TrimSuffix(*confdir, "\\")
 	}
 
-	rd4 := redisconfD4{}
+	// Check redis-pretensor configuration
+	rrg := redisconf{}
 	// Parse Input Redis Config
-	tmp := config.ReadConfigFile(*confdir, "redis_server")
+	tmp := config.ReadConfigFile(*confdir, "redis_pretensor")
 	ss := strings.Split(string(tmp), "/")
 	if len(ss) <= 1 {
-		log.Fatal("Missing Database in Redis input config: should be host:port/database_name")
+		log.Fatal("Missing Database in redis_pretensor input config: should be host:port/database_name")
 	}
-	rd4.redisGraph = ss[1]
+	rrg.databasename = ss[1]
 	var ret bool
 	ret, ss[0] = config.IsNet(ss[0])
 	if ret {
 		sss := strings.Split(string(ss[0]), ":")
-		rd4.redisHost = sss[0]
-		rd4.redisPort = sss[1]
+		rrg.redisHost = sss[0]
+		rrg.redisPort = sss[1]
 	} else {
-		logger.Fatal("Redis config error.")
+		logger.Fatal("Redis-pretensor config error.")
 	}
+
+	// Create a new redis-pretensor connection pool
+	redisPretensorPool = newPool(rrg.redisHost+":"+rrg.redisPort, 400)
+	redisConn, err = redisPretensorPool.Dial()
+	if err != nil {
+		logger.Fatal("Could not connect to redis-pretensor Redis")
+	}
+
+	// Check redis-d4 configuration
+	rd4 := redisconf{}
+	// Parse Input Redis Config
+	tmp = config.ReadConfigFile(*confdir, "redis_d4")
+	ss = strings.Split(string(tmp), "/")
+	if len(ss) <= 1 {
+		log.Fatal("Missing Database in redis_d4 input config: should be host:port/database_name")
+	}
+	rd4.databasename = ss[1]
+	ret, ss[0] = config.IsNet(ss[0])
+	if ret {
+		sss := strings.Split(string(ss[0]), ":")
+		rrg.redisHost = sss[0]
+		rrg.redisPort = sss[1]
+	} else {
+		logger.Fatal("Redis-d4 config error.")
+	}
+
+	// Create a new redis-graph connection pool
+	redisd4Pool = newPool(rrg.redisHost+":"+rrg.redisPort, 400)
+	redisConn, err = redisd4Pool.Dial()
+	if err != nil {
+		logger.Fatal("Could not connect to d4 Redis")
+	}
+
+	// Get that the redis_d4_queue file
+	redisd4Queue = string(config.ReadConfigFile(*confdir, "redis_d4_queue"))
 
 	// Checking that the log folder exists
 	log_folder := string(config.ReadConfigFile(*confdir, "folder"))
 	_, err = ioutil.ReadDir(log_folder)
 	if err != nil {
-		logger.Fatal(err)
+		logger.Println(err)
+		walk_folder = false
 	}
 
 	// Loading Requests to monitor
 	tomonitor = config.ReadConfigFileLines(*confdir, "tomonitor")
 	// Loading proxy list to remove from Hosts
 	mitm = config.ReadConfigFileLines(*confdir, "mitm")
-
-	// Create a new redis connection pool
-	redisInputPool = newPool(rd4.redisHost+":"+rd4.redisPort, 400)
-	redisConn, err = redisInputPool.Dial()
-	if err != nil {
-		logger.Fatal("Could not connect to d4 Redis")
-	}
 
 	// Init maps
 	curls = make(map[string]string)
@@ -152,13 +203,83 @@ func main() {
 	graph := rg.GraphNew("pretensor", redisConn)
 	graph.Delete()
 
+	// Create processing channels
+	binchan = make(chan binurl, 200)
+	filechan = make(chan filedesc, 100000)
+	bashchan = make(chan string, 200)
+
+	// Launch the download routine
+	//go downloadBin(binchan, sortie)
+	// Launch the Pretensor routine
+	wg.Add(1)
+	go pretensorParse(filechan, sortie, &graph)
+
 	// Walking folder
 	err = filepath.Walk(log_folder,
 		func(path string, info os.FileInfo, err error) error {
+			filechan <- filedesc{path: path, info: info}
 			if err != nil {
 				return err
 			}
 			logger.Println(info.Name(), info.Size())
+			return nil
+		})
+	//
+	//// Write non-ELF to files and had hashed to the graph
+	//for k, v := range bashs {
+	//	// Set Sha 256 hash to the object
+	//	v.SetSha256(k)
+	//	// Add binary's hash to the graph
+	//	query := `MATCH (b:Bot {ip:"` + v.GetIp() + `"})
+	//			  MATCH (c:CC {host:"` + v.GetHost() + `"})
+	//			  MERGE (bin:Binary ` + v.GetBinaryMergeSelector() + `)
+	//			  MERGE (b)-[d:download {name: "download"}]->(bin)
+	//			  MERGE (c)-[h:host {name: "host"}]->(bin)`
+	//
+	//	fmt.Println(query)
+	//	result, err := graph.Query(query)
+	//	if err != nil {
+	//		logger.Println(err)
+	//	}
+	//	fmt.Println(result)
+	//	err = ioutil.WriteFile("./infected/"+k, []byte(v.GetBody()), 0644)
+	//	if err != nil {
+	//		logger.Println(err)
+	//	}
+	//}
+	//
+	//// Write curl commands to a file
+	//for _, v := range curls {
+	//	f, err := os.OpenFile("./infected/curl.sh", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	//	if err != nil {
+	//		logger.Println(err)
+	//	}
+	//	if _, err := f.Write([]byte(fmt.Sprintf("%v\n", v))); err != nil {
+	//		f.Close()
+	//		logger.Println(err)
+	//	}
+	//	if err := f.Close(); err != nil {
+	//		logger.Println(err)
+	//	}
+	//}
+
+	// Waiting for the binary fetching routines
+	wg.Wait()
+
+	logger.Println(wg)
+	logger.Println("Exiting")
+}
+
+// Parsing whatever is thrown into filechan
+func pretensorParse(filechan chan filedesc, sortie chan os.Signal, graph *rg.Graph) error {
+	logger.Println("Entering pretensorparse")
+	defer wg.Done()
+	for {
+		select {
+		case file := <-filechan:
+			logger.Println(file.path)
+			info := file.info
+			path := file.path
 			if !info.IsDir() {
 				content, err := ioutil.ReadFile(path)
 				if err != nil {
@@ -229,13 +350,13 @@ func main() {
 
 						// If the bot downloaded a binary
 						if tmp.GetContenttype() == "application/octet-stream" && tmp.GetStatus() == "200" {
-							// Logging all bash scripts and curl commands to downlaod binaries
+							// Logging all bash scripts and curl commands to download binaries
 							if strings.Contains(fmt.Sprintf("%v", tmp.GetBody()), "ELF") {
 								tmpsha256 := sha256.Sum256([]byte(tmp.Curl()))
 								curls[fmt.Sprintf("%x", tmpsha256)] = tmp.Curl()
 								tmpsha256b := sha256.Sum256([]byte(tmp.GetBinurl()))
-								binurls[fmt.Sprintf("%x", tmpsha256b)] = tmp
-
+								binchan <- binurl{url: fmt.Sprintf("%x", tmpsha256b),
+									phit: tmp}
 							} else {
 								tmpsha256 := sha256.Sum256([]byte(tmp.GetBody()))
 								bashs[fmt.Sprintf("%x", tmpsha256)] = tmp
@@ -316,120 +437,93 @@ func main() {
 					}
 				}
 			}
+		case <-sortie:
 			return nil
-		})
-	if err != nil {
-		log.Println(err)
+		}
 	}
+}
 
-	// Gathering Binaries ourselves
-	for _, v := range binurls {
-		wg.Add(1)
-		// Go fetch the binary
-		go func(vi *pretensorhit.PHit) {
-			redisGR, err = redisInputPool.Dial()
-			if err != nil {
-				logger.Fatal("Could not connect routine to d4 Redis")
-			}
-			graphGR := rg.GraphNew("pretensor", redisGR)
-			logger.Println("Fetching " + vi.GetBinurl())
-			defer wg.Done()
-			// create a socks5 dialer
-			dialer, err := proxy.SOCKS5("tcp", "127.0.0.1:9050", nil, proxy.Direct)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "can't connect to the proxy:", err)
-				os.Exit(1)
-			}
-			// setup a http client
-			httpTransport := &http.Transport{}
-			httpClient := &http.Client{Transport: httpTransport}
-			// set our socks5 as the dialer
-			httpTransport.Dial = dialer.Dial
-			// create a request
-			req, err := http.NewRequest("GET", vi.GetBinurl(), nil)
-			req.Header.Set("User-Agent", "-")
-			if err != nil {
-				logger.Println(os.Stderr, "can't create request:", err)
-			}
-			// use the http client to fetch the page
-			resp, err := httpClient.Do(req)
-			if err != nil {
-				logger.Println(os.Stderr, "can't GET page:", err)
-				return
-			}
-			defer resp.Body.Close()
-			b, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				logger.Println(os.Stderr, "error reading body:", err)
-			}
-			tmpb := sha256.Sum256(b)
-			err = ioutil.WriteFile("./infected/"+fmt.Sprintf("%x", tmpb), b, 0644)
-			if err != nil {
-				logger.Println(err)
-			}
+// Gathering Binaries ourselves
+func downloadBin(phitchan chan binurl, sortie chan os.Signal) error {
+	wg.Add(1)
+	defer wg.Done()
+downloading:
+	for {
+		select {
+		case vi := <-phitchan:
+			fmt.Println("Received a new binary to download")
+			// Check whether we already touched it
+			tmpsha256b := sha256.Sum256([]byte(vi.phit.GetBinurl()))
+			if _, ok := binurls[fmt.Sprintf("%x", tmpsha256b)]; !ok {
+				//do something here
+				var err error
+				redisGR, err = redisPretensorPool.Dial()
+				if err != nil {
+					logger.Fatal("Could not connect routine to d4 Redis")
+				}
+				graphGR := rg.GraphNew("pretensor", redisGR)
+				logger.Println("Fetching " + vi.phit.GetBinurl())
+				defer wg.Done()
+				// create a socks5 dialer
+				dialer, err := proxy.SOCKS5("tcp", "127.0.0.1:9050", nil, proxy.Direct)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "can't connect to the proxy:", err)
+					os.Exit(1)
+				}
+				// setup a http client
+				httpTransport := &http.Transport{}
+				httpClient := &http.Client{Transport: httpTransport}
+				// set our socks5 as the dialer
+				httpTransport.Dial = dialer.Dial
+				// create a request
+				req, err := http.NewRequest("GET", vi.phit.GetBinurl(), nil)
+				req.Header.Set("User-Agent", "-")
+				if err != nil {
+					logger.Println(os.Stderr, "can't create request:", err)
+				}
+				// use the http client to fetch the page
+				resp, err := httpClient.Do(req)
+				if err != nil {
+					logger.Println(os.Stderr, "can't GET page:", err)
+					break downloading
+				}
+				defer resp.Body.Close()
+				b, err := ioutil.ReadAll(resp.Body)
+				if err != nil {
+					logger.Println(os.Stderr, "error reading body:", err)
+				}
+				tmpb := sha256.Sum256(b)
+				err = ioutil.WriteFile("./infected/"+fmt.Sprintf("%x", tmpb), b, 0644)
+				if err != nil {
+					logger.Println(err)
+				}
 
-			// Update the Go object with this sha
-			vi.SetSha256(fmt.Sprintf("%x", tmpb))
+				// Update the Go object with this sha
+				vi.phit.SetSha256(fmt.Sprintf("%x", tmpb))
 
-			fmt.Printf("Not empty, we Create a new relationship for: %v ", vi.GetSha256())
-			query := `MATCH (b:Bot {ip:"` + vi.GetIp() + `"})
-								MATCH (c:CC {host:"` + vi.GetHost() + `"})
-								MERGE (bin:Binary ` + vi.GetBinaryMergeSelector() + `)
+				fmt.Printf("Not empty, we Create a new relationship for: %v ", vi.phit.GetSha256())
+				query := `MATCH (b:Bot {ip:"` + vi.phit.GetIp() + `"})
+								MATCH (c:CC {host:"` + vi.phit.GetHost() + `"})
+								MERGE (bin:Binary ` + vi.phit.GetBinaryMergeSelector() + `)
 								MERGE (b)-[d:download {name: "download"}]->(bin)
 								MERGE (c)-[h:host {name: "host"}]->(bin)`
-			fmt.Println(query)
-			logger.Println(query)
-			result, err := graphGR.Query(query)
-			logger.Println(result)
-			fmt.Println(result)
-			if err != nil {
-				fmt.Println(err)
+				fmt.Println(query)
+				logger.Println(query)
+				result, err := graphGR.Query(query)
+				logger.Println(result)
+				fmt.Println(result)
+				if err != nil {
+					fmt.Println(err)
+				}
+
+				// update the binurls map
+				binurls[fmt.Sprintf("%x", tmpsha256b)] = vi.phit
 			}
-		}(v)
-	}
-
-	// Write non-ELF to files and had hashed to the graph
-	for k, v := range bashs {
-		// Set Sha 256 hash to the object
-		v.SetSha256(k)
-		// Add binary's hash to the graph
-		query := `MATCH (b:Bot {ip:"` + v.GetIp() + `"})
- 				  MATCH (c:CC {host:"` + v.GetHost() + `"})
-				  MERGE (bin:Binary ` + v.GetBinaryMergeSelector() + `)
-				  MERGE (b)-[d:download {name: "download"}]->(bin)
-				  MERGE (c)-[h:host {name: "host"}]->(bin)`
-
-		fmt.Println(query)
-		result, err := graph.Query(query)
-		if err != nil {
-			logger.Println(err)
-		}
-		fmt.Println(result)
-		err = ioutil.WriteFile("./infected/"+k, []byte(v.GetBody()), 0644)
-		if err != nil {
-			logger.Println(err)
+		case <-sortie:
+			return nil
 		}
 	}
-
-	// Write curl commands to a file
-	for _, v := range curls {
-		f, err := os.OpenFile("./infected/curl.sh", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			logger.Println(err)
-		}
-		if _, err := f.Write([]byte(fmt.Sprintf("%v\n", v))); err != nil {
-			f.Close()
-			logger.Println(err)
-		}
-		if err := f.Close(); err != nil {
-			logger.Println(err)
-		}
-	}
-
-	// Waiting for the binary fetching routines
-	wg.Wait()
-
-	logger.Println("Exiting")
+	return nil
 }
 
 func removeMitm(s gj.Result) gj.Result {
