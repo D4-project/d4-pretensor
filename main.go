@@ -50,6 +50,7 @@ var (
 	buf                bytes.Buffer
 	logger             = log.New(&buf, "INFO: ", log.Lshortfile)
 	redisConn          redis.Conn
+	redisConnPretensor          redis.Conn
 	redisGR            redis.Conn
 	redisPretensorPool *redis.Pool
 	redisd4Pool        *redis.Pool
@@ -148,7 +149,7 @@ func main() {
 
 	// Create a new redis-pretensor connection pool
 	redisPretensorPool = newPool(rrg.redisHost+":"+rrg.redisPort, 400)
-	redisConn, err = redisPretensorPool.Dial()
+	redisConnPretensor, err = redisPretensorPool.Dial()
 	if err != nil {
 		logger.Fatal("Could not connect to redis-pretensor Redis")
 	}
@@ -200,7 +201,7 @@ func main() {
 	binurls = make(map[string]*pretensorhit.PHit)
 
 	// Init redis graph
-	graph := rg.GraphNew("pretensor", redisConn)
+	graph := rg.GraphNew("pretensor", redisConnPretensor)
 	graph.Delete()
 
 	// Create processing channels
@@ -266,7 +267,6 @@ func main() {
 	// Waiting for the binary fetching routines
 	wg.Wait()
 
-	logger.Println(wg)
 	logger.Println("Exiting")
 }
 
@@ -316,8 +316,10 @@ func pretensorParse(filechan chan filedesc, sortie chan os.Signal, graph *rg.Gra
 						result, err := graph.Query(query)
 						if err != nil {
 							fmt.Println(err)
+							fmt.Println(result)
 						}
 						if result.Empty() {
+							fmt.Println(tmp.GetBotNode())
 							graph.AddNode(tmp.GetBotNode())
 							_, err := graph.Flush()
 							if err != nil {
