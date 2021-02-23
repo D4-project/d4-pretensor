@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/D4-project/d4-pretensor/pretensorhit"
 	"golang.org/x/net/proxy"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -47,6 +48,8 @@ var (
 	confdir            = flag.String("c", "conf.sample", "configuration directory")
 	folder             = flag.String("log_folder", "logs", "folder containing mod security logs")
 	debug              = flag.Bool("d", false, "debug output")
+	tmprate, _         = time.ParseDuration("5s")
+	rate               = flag.Duration("rl", tmprate, "Rate limiter: time in human format before retry after EOF")
 	buf                bytes.Buffer
 	logger             = log.New(&buf, "INFO: ", log.Lshortfile)
 	redisConn          redis.Conn
@@ -205,9 +208,9 @@ func main() {
 	graph.Delete()
 
 	// Create processing channels
-	binchan = make(chan bindesc, 200)
+	binchan = make(chan bindesc, 2000)
 	filechan = make(chan filedesc, 100000)
-	bashchan = make(chan bindesc, 200)
+	bashchan = make(chan bindesc, 2000)
 
 	wg.Add(3)
 	// Launch the download routine
@@ -229,6 +232,32 @@ func main() {
 			return nil
 		})
 
+	redisConnD4, err := redisd4Pool.Dial()
+	if err != nil {
+		logger.Fatal("Could not connect to d4 Redis")
+	}
+	if _, err := redisConnD4.Do("SELECT", rd4.databasename); err != nil {
+		redisConnD4.Close()
+		logger.Println(err)
+		return
+	}
+	// Once the walk is over, we start listening to d4 to get new files
+	rateLimiter := time.Tick(*rate)
+
+redisNormal:
+	err = redisRead(redisConnD4, redisd4Queue)
+
+	for {
+		select {
+		case <-rateLimiter:
+			// Use the ratelimiter while the connection hangs
+			logger.Println("Limited read")
+			goto redisNormal
+		case <-sortie:
+			goto gtfo
+		}
+	}
+
 	//// Write curl commands to a file
 	//for _, v := range curls {
 	//	f, err := os.OpenFile("./infected/curl.sh", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -247,7 +276,30 @@ func main() {
 	// Waiting for the binary handling routines
 	wg.Wait()
 
+gtfo:
 	logger.Println("Exiting")
+}
+
+func redisRead(redisConnD4 redis.Conn, redisd4Queue string) error {
+	for {
+		buf, err := redis.String(redisConnD4.Do("LPOP", redisd4Queue))
+		// If redis return empty: EOF (user should not stop)
+		if err == redis.ErrNil {
+			// no new record we break until the tick
+			return io.EOF
+			// oops
+		} else if err != nil {
+			logger.Println(err)
+			return err
+		}
+		fileinfo, err := os.Stat(buf)
+		if err != nil {
+			logger.Println(err)
+			return err
+		}
+		filechan <- filedesc{path: buf, info: fileinfo}
+	}
+	return nil
 }
 
 // Parsing whatever is thrown into filechan
