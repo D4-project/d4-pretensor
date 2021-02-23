@@ -31,8 +31,8 @@ type (
 		databasename string
 	}
 
-	binurl struct {
-		url  string
+	bindesc struct {
+		sha  string
 		phit *pretensorhit.PHit
 	}
 
@@ -50,7 +50,7 @@ var (
 	buf                bytes.Buffer
 	logger             = log.New(&buf, "INFO: ", log.Lshortfile)
 	redisConn          redis.Conn
-	redisConnPretensor          redis.Conn
+	redisConnPretensor redis.Conn
 	redisGR            redis.Conn
 	redisPretensorPool *redis.Pool
 	redisd4Pool        *redis.Pool
@@ -58,14 +58,14 @@ var (
 	tomonitor          [][]byte
 	mitm               [][]byte
 	curls              map[string]string
-	// Keeps a map of url/hash to keep track of what we downloaded already
+	// Keeps a map of sha/hash to keep track of what we downloaded already
 	binurls     map[string]*pretensorhit.PHit
 	bashs       map[string]*pretensorhit.PHit
 	wg          sync.WaitGroup
 	walk_folder = true
-	binchan     chan binurl
+	binchan     chan bindesc
 	filechan    chan filedesc
-	bashchan    chan string
+	bashchan    chan bindesc
 )
 
 func main() {
@@ -205,14 +205,17 @@ func main() {
 	graph.Delete()
 
 	// Create processing channels
-	binchan = make(chan binurl, 200)
+	binchan = make(chan bindesc, 200)
 	filechan = make(chan filedesc, 100000)
-	bashchan = make(chan string, 200)
+	bashchan = make(chan bindesc, 200)
 
+	wg.Add(3)
 	// Launch the download routine
-	//go downloadBin(binchan, sortie)
+	go downloadBin(binchan, sortie)
+	// Write no ELF files to files
+	go writeBashs(bashchan, sortie)
 	// Launch the Pretensor routine
-	wg.Add(1)
+	// Leaving the existing redis connection to pretensorParse
 	go pretensorParse(filechan, sortie, &graph)
 
 	// Walking folder
@@ -225,30 +228,7 @@ func main() {
 			logger.Println(info.Name(), info.Size())
 			return nil
 		})
-	//
-	//// Write non-ELF to files and had hashed to the graph
-	//for k, v := range bashs {
-	//	// Set Sha 256 hash to the object
-	//	v.SetSha256(k)
-	//	// Add binary's hash to the graph
-	//	query := `MATCH (b:Bot {ip:"` + v.GetIp() + `"})
-	//			  MATCH (c:CC {host:"` + v.GetHost() + `"})
-	//			  MERGE (bin:Binary ` + v.GetBinaryMergeSelector() + `)
-	//			  MERGE (b)-[d:download {name: "download"}]->(bin)
-	//			  MERGE (c)-[h:host {name: "host"}]->(bin)`
-	//
-	//	fmt.Println(query)
-	//	result, err := graph.Query(query)
-	//	if err != nil {
-	//		logger.Println(err)
-	//	}
-	//	fmt.Println(result)
-	//	err = ioutil.WriteFile("./infected/"+k, []byte(v.GetBody()), 0644)
-	//	if err != nil {
-	//		logger.Println(err)
-	//	}
-	//}
-	//
+
 	//// Write curl commands to a file
 	//for _, v := range curls {
 	//	f, err := os.OpenFile("./infected/curl.sh", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -264,7 +244,7 @@ func main() {
 	//	}
 	//}
 
-	// Waiting for the binary fetching routines
+	// Waiting for the binary handling routines
 	wg.Wait()
 
 	logger.Println("Exiting")
@@ -357,11 +337,12 @@ func pretensorParse(filechan chan filedesc, sortie chan os.Signal, graph *rg.Gra
 								tmpsha256 := sha256.Sum256([]byte(tmp.Curl()))
 								curls[fmt.Sprintf("%x", tmpsha256)] = tmp.Curl()
 								tmpsha256b := sha256.Sum256([]byte(tmp.GetBinurl()))
-								binchan <- binurl{url: fmt.Sprintf("%x", tmpsha256b),
+								binchan <- bindesc{sha: fmt.Sprintf("%x", tmpsha256b),
 									phit: tmp}
 							} else {
 								tmpsha256 := sha256.Sum256([]byte(tmp.GetBody()))
-								bashs[fmt.Sprintf("%x", tmpsha256)] = tmp
+								bashchan <- bindesc{sha: fmt.Sprintf("%x", tmpsha256),
+									phit: tmp}
 							}
 							// Create binary if not exist
 							query := `MATCH (bin` + tmp.GetBinaryMatchQuerySelector() + `) RETURN bin`
@@ -445,9 +426,51 @@ func pretensorParse(filechan chan filedesc, sortie chan os.Signal, graph *rg.Gra
 	}
 }
 
+// Write Bashs scripts to files
+func writeBashs(bc chan bindesc, sortie chan os.Signal) error {
+	defer wg.Done()
+	for {
+		select {
+		case v := <-bc:
+			fmt.Println("Received a new bash to write")
+			var err error
+			redisGR, err = redisPretensorPool.Dial()
+			if err != nil {
+				logger.Fatal("Could not connect routine to pretensor Redis")
+			}
+			graphGR := rg.GraphNew("pretensor", redisGR)
+			if _, ok := binurls[fmt.Sprintf("%x", v.sha)]; !ok {
+				// Set Sha 256 hash to the object
+				v.phit.SetSha256(v.sha)
+				// Add binary's hash to the graph
+				query := `MATCH (b:Bot {ip:"` + v.phit.GetIp() + `"})
+				  MATCH (c:CC {host:"` + v.phit.GetHost() + `"})
+				  MERGE (bin:Binary ` + v.phit.GetBinaryMergeSelector() + `)
+				  MERGE (b)-[d:download {name: "download"}]->(bin)
+				  MERGE (c)-[h:host {name: "host"}]->(bin)`
+
+				fmt.Println(query)
+				result, err := graphGR.Query(query)
+				if err != nil {
+					logger.Println(err)
+				}
+				fmt.Println(result)
+				err = ioutil.WriteFile("./infected/"+v.sha, []byte(v.phit.GetBody()), 0644)
+				if err != nil {
+					logger.Println(err)
+				}
+				// Update de binbash map
+				bashs[fmt.Sprintf("%x", v.sha)] = v.phit
+			}
+		case <-sortie:
+			return nil
+		}
+	}
+	return nil
+}
+
 // Gathering Binaries ourselves
-func downloadBin(phitchan chan binurl, sortie chan os.Signal) error {
-	wg.Add(1)
+func downloadBin(phitchan chan bindesc, sortie chan os.Signal) error {
 	defer wg.Done()
 downloading:
 	for {
@@ -455,17 +478,15 @@ downloading:
 		case vi := <-phitchan:
 			fmt.Println("Received a new binary to download")
 			// Check whether we already touched it
-			tmpsha256b := sha256.Sum256([]byte(vi.phit.GetBinurl()))
-			if _, ok := binurls[fmt.Sprintf("%x", tmpsha256b)]; !ok {
+			if _, ok := binurls[vi.sha]; !ok {
 				//do something here
 				var err error
 				redisGR, err = redisPretensorPool.Dial()
 				if err != nil {
-					logger.Fatal("Could not connect routine to d4 Redis")
+					logger.Fatal("Could not connect routine to pretensor Redis")
 				}
 				graphGR := rg.GraphNew("pretensor", redisGR)
 				logger.Println("Fetching " + vi.phit.GetBinurl())
-				defer wg.Done()
 				// create a socks5 dialer
 				dialer, err := proxy.SOCKS5("tcp", "127.0.0.1:9050", nil, proxy.Direct)
 				if err != nil {
@@ -519,7 +540,7 @@ downloading:
 				}
 
 				// update the binurls map
-				binurls[fmt.Sprintf("%x", tmpsha256b)] = vi.phit
+				binurls[vi.sha] = vi.phit
 			}
 		case <-sortie:
 			return nil
