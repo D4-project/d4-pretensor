@@ -62,13 +62,14 @@ var (
 	mitm               [][]byte
 	curls              map[string]string
 	// Keeps a map of sha/hash to keep track of what we downloaded already
-	binurls     map[string]*pretensorhit.PHit
-	bashs       map[string]*pretensorhit.PHit
-	wg          sync.WaitGroup
-	walk_folder = true
-	binchan     chan bindesc
-	filechan    chan filedesc
-	bashchan    chan bindesc
+	binurls      map[string]*pretensorhit.PHit
+	bashs        map[string]*pretensorhit.PHit
+	wg           sync.WaitGroup
+	walk_folder  = true
+	checkredisd4 = true
+	binchan      chan bindesc
+	filechan     chan filedesc
+	bashchan     chan bindesc
 )
 
 func main() {
@@ -163,27 +164,28 @@ func main() {
 	tmp = config.ReadConfigFile(*confdir, "redis_d4")
 	ss = strings.Split(string(tmp), "/")
 	if len(ss) <= 1 {
-		log.Fatal("Missing Database in redis_d4 input config: should be host:port/database_name")
-	}
-	rd4.databasename = ss[1]
-	ret, ss[0] = config.IsNet(ss[0])
-	if ret {
-		sss := strings.Split(string(ss[0]), ":")
-		rrg.redisHost = sss[0]
-		rrg.redisPort = sss[1]
+		logger.Println("Missing Database in redis_d4 input config: should be host:port/database_name -- Skipping")
+		checkredisd4 = false
 	} else {
-		logger.Fatal("Redis-d4 config error.")
-	}
+		rd4.databasename = ss[1]
+		ret, ss[0] = config.IsNet(ss[0])
+		if ret {
+			sss := strings.Split(string(ss[0]), ":")
+			rrg.redisHost = sss[0]
+			rrg.redisPort = sss[1]
+		} else {
+			logger.Fatal("Redis-d4 config error.")
+		}
+		// Create a new redis-graph connection pool
+		redisd4Pool = newPool(rrg.redisHost+":"+rrg.redisPort, 400)
+		redisConn, err = redisd4Pool.Dial()
+		if err != nil {
+			logger.Fatal("Could not connect to d4 Redis")
+		}
 
-	// Create a new redis-graph connection pool
-	redisd4Pool = newPool(rrg.redisHost+":"+rrg.redisPort, 400)
-	redisConn, err = redisd4Pool.Dial()
-	if err != nil {
-		logger.Fatal("Could not connect to d4 Redis")
+		// Get that the redis_d4_queue file
+		redisd4Queue = string(config.ReadConfigFile(*confdir, "redis_d4_queue"))
 	}
-
-	// Get that the redis_d4_queue file
-	redisd4Queue = string(config.ReadConfigFile(*confdir, "redis_d4_queue"))
 
 	// Checking that the log folder exists
 	log_folder := string(config.ReadConfigFile(*confdir, "folder"))
@@ -232,29 +234,32 @@ func main() {
 			return nil
 		})
 
-	redisConnD4, err := redisd4Pool.Dial()
-	if err != nil {
-		logger.Fatal("Could not connect to d4 Redis")
-	}
-	if _, err := redisConnD4.Do("SELECT", rd4.databasename); err != nil {
-		redisConnD4.Close()
-		logger.Println(err)
-		return
-	}
-	// Once the walk is over, we start listening to d4 to get new files
-	rateLimiter := time.Tick(*rate)
+	if checkredisd4 {
 
-redisNormal:
-	err = redisRead(redisConnD4, redisd4Queue)
+		redisConnD4, err := redisd4Pool.Dial()
+		if err != nil {
+			logger.Fatal("Could not connect to d4 Redis")
+		}
+		if _, err := redisConnD4.Do("SELECT", rd4.databasename); err != nil {
+			redisConnD4.Close()
+			logger.Println(err)
+			return
+		}
+		// Once the walk is over, we start listening to d4 to get new files
+		rateLimiter := time.Tick(*rate)
 
-	for {
-		select {
-		case <-rateLimiter:
-			// Use the ratelimiter while the connection hangs
-			logger.Println("Limited read")
-			goto redisNormal
-		case <-sortie:
-			goto gtfo
+	redisNormal:
+		err = redisRead(redisConnD4, redisd4Queue)
+
+		for {
+			select {
+			case <-rateLimiter:
+				// Use the ratelimiter while the connection hangs
+				logger.Println("Limited read")
+				goto redisNormal
+			case <-sortie:
+				goto gtfo
+			}
 		}
 	}
 
