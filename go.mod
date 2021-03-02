@@ -2,10 +2,8 @@ module github.com/D4-project/d4-pretensor
 
 go 1.15
 
-replace github.com/D4-project/d4-golang-utils => /home/jlouis/Git/d4-golang-utils
-
 require (
-	github.com/D4-project/d4-golang-utils v0.1.8
+	github.com/D4-project/d4-golang-utils v0.1.13
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/gomodule/redigo v2.0.0+incompatible
 	github.com/kr/pretty v0.1.0 // indirect
