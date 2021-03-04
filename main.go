@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -48,6 +49,7 @@ var (
 	confdir            = flag.String("c", "conf.sample", "configuration directory")
 	folder             = flag.String("log_folder", "logs", "folder containing mod security logs")
 	debug              = flag.Bool("d", false, "debug output")
+	verbose            = flag.Bool("v", false, "additional debug output")
 	delete             = flag.Bool("D", false, "Delete previous graph")
 	tmprate, _         = time.ParseDuration("5s")
 	rate               = flag.Duration("rl", tmprate, "Rate limiter: time in human format before retry after EOF")
@@ -237,7 +239,9 @@ func main() {
 			if err != nil {
 				return err
 			}
-			logger.Println(info.Name(), info.Size())
+			if *verbose {
+				logger.Println(info.Name(), info.Size())
+			}
 			return nil
 		})
 
@@ -311,7 +315,6 @@ func redisRead(redisConnD4 redis.Conn, redisd4Queue string) error {
 		}
 		filechan <- filedesc{path: buf, info: fileinfo}
 	}
-	return nil
 }
 
 // Parsing whatever is thrown into filechan
@@ -321,7 +324,9 @@ func pretensorParse(filechan chan filedesc, sortie chan os.Signal, graph *rg.Gra
 	for {
 		select {
 		case file := <-filechan:
-			logger.Println(file.path)
+			if *debug {
+				logger.Println(file.path)
+			}
 			info := file.info
 			path := file.path
 			if !info.IsDir() {
@@ -474,7 +479,7 @@ func pretensorParse(filechan chan filedesc, sortie chan os.Signal, graph *rg.Gra
 							}
 						}
 
-						if *debug {
+						if *verbose {
 							fmt.Println(tmp)
 						}
 						// We treated the request
@@ -505,25 +510,27 @@ func writeBashs(bc chan bindesc, sortie chan os.Signal) error {
 					logger.Println("Writing " + v.url)
 				}
 				// Set Sha 256 hash to the object
-				tmpsha256 := sha256.Sum256([]byte(v.phit.GetBody()))
-				v.phit.SetSha256(fmt.Sprintf("%x", tmpsha256))
-				// Add binary's hash to the graph
-				query := `MATCH (b:Bot {ip:"` + v.phit.GetIp() + `"})
+				if len(v.phit.GetBody()) > 0 {
+					tmpsha256 := sha256.Sum256([]byte(v.phit.GetBody()))
+					v.phit.SetSha256(fmt.Sprintf("%x", tmpsha256))
+					// Add binary's hash to the graph
+					query := `MATCH (b:Bot {ip:"` + v.phit.GetIp() + `"})
 				  MATCH (c:CC {host:"` + v.phit.GetHost() + `"})
 				  MERGE (bin:Binary ` + v.phit.GetBinaryMergeSelector() + `)
 				  MERGE (b)-[d:download {name: "download"}]->(bin)
 				  MERGE (c)-[h:host {name: "host"}]->(bin)`
-				result, err := graphGR.Query(query)
-				if err != nil {
-					logger.Println(err)
-				}
-				if *debug {
-					logger.Println(query)
-					logger.Println(result)
-				}
-				err = ioutil.WriteFile("./infected_bash/"+v.phit.GetSha256(), []byte(v.phit.GetBody()), 0644)
-				if err != nil {
-					logger.Println(err)
+					result, err := graphGR.Query(query)
+					if err != nil {
+						logger.Println(err)
+					}
+					if *debug {
+						logger.Println(query)
+						logger.Println(result)
+					}
+					err = ioutil.WriteFile("./infected_bash/"+v.phit.GetSha256(), []byte(v.phit.GetBody()), 0644)
+					if err != nil {
+						logger.Println(err)
+					}
 				}
 				// Update de binbash map
 				bashs[v.phit.GetBinurl()] = v.phit
@@ -534,7 +541,6 @@ func writeBashs(bc chan bindesc, sortie chan os.Signal) error {
 			return nil
 		}
 	}
-	return nil
 }
 
 // Gathering Binaries ourselves
@@ -556,36 +562,39 @@ downloading:
 				if *debug {
 					logger.Println("Fetching " + vi.url)
 				}
+				// Set some options for our TCP dialer
+				dialer := net.Dialer{
+					Timeout: 15 * time.Second,
+				}
 				// create a socks5 dialer
-				dialer, err := proxy.SOCKS5("tcp", "127.0.0.1:9050", nil, proxy.Direct)
+				dial, err := proxy.SOCKS5("tcp", "127.0.0.1:9050", nil, &dialer)
 				if err != nil {
-					fmt.Fprintln(os.Stderr, "can't connect to the proxy:", err)
+					logger.Println("can't connect to the proxy:", err)
 					os.Exit(1)
 				}
-				// setup a http client
 				httpTransport := &http.Transport{}
 				httpClient := &http.Client{Transport: httpTransport}
 				// set our socks5 as the dialer
-				httpTransport.Dial = dialer.Dial
+				httpTransport.Dial = dial.Dial
 				// create a request
 				req, err := http.NewRequest("GET", vi.phit.GetBinurl(), nil)
 				req.Header.Set("User-Agent", "-")
 				if err != nil {
-					logger.Println(os.Stderr, "can't create request:", err)
+					logger.Println("can't create request:", err)
 				}
 				// use the http client to fetch the page
 				resp, err := httpClient.Do(req)
-				defer resp.Body.Close()
 				if err != nil {
-					logger.Println(os.Stderr, "can't GET page:", err)
+					logger.Println("can't GET page:", err)
 					break downloading
 				}
+				defer resp.Body.Close()
 
 				// update the binurls map
 				binurls[vi.phit.GetBinurl()] = vi.phit
 				b, err := ioutil.ReadAll(resp.Body)
 				if err != nil || len(b) < 1 {
-					logger.Println(os.Stderr, "error reading body:", err)
+					logger.Println("error reading body:", err)
 					break downloading
 				}
 				tmpb := sha256.Sum256(b)
