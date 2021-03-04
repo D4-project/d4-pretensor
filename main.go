@@ -33,7 +33,7 @@ type (
 	}
 
 	bindesc struct {
-		sha  string
+		url  string
 		phit *pretensorhit.PHit
 	}
 
@@ -48,7 +48,7 @@ var (
 	confdir            = flag.String("c", "conf.sample", "configuration directory")
 	folder             = flag.String("log_folder", "logs", "folder containing mod security logs")
 	debug              = flag.Bool("d", false, "debug output")
-	delete              = flag.Bool("D", false, "Delete previous graph")
+	delete             = flag.Bool("D", false, "Delete previous graph")
 	tmprate, _         = time.ParseDuration("5s")
 	rate               = flag.Duration("rl", tmprate, "Rate limiter: time in human format before retry after EOF")
 	buf                bytes.Buffer
@@ -212,7 +212,7 @@ func main() {
 
 	// Init redis graph
 	graph := rg.GraphNew("pretensor", redisConnPretensor)
-	if *delete{
+	if *delete {
 		graph.Delete()
 	}
 
@@ -363,7 +363,9 @@ func pretensorParse(filechan chan filedesc, sortie chan os.Signal, graph *rg.Gra
 							fmt.Println(result)
 						}
 						if result.Empty() {
-							fmt.Println(tmp.GetBotNode())
+							if *debug {
+								logger.Println(tmp.GetBotNode())
+							}
 							graph.AddNode(tmp.GetBotNode())
 							_, err := graph.Flush()
 							if err != nil {
@@ -398,15 +400,11 @@ func pretensorParse(filechan chan filedesc, sortie chan os.Signal, graph *rg.Gra
 						if tmp.GetContenttype() == "application/octet-stream" && tmp.GetStatus() == "200" {
 							// Logging all bash scripts and curl commands to download binaries
 							if strings.Contains(fmt.Sprintf("%v", tmp.GetBody()), "ELF") {
-								tmpsha256 := sha256.Sum256([]byte(tmp.Curl()))
-								curls[fmt.Sprintf("%x", tmpsha256)] = tmp.Curl()
-								tmpsha256b := sha256.Sum256([]byte(tmp.GetBinurl()))
-								binchan <- bindesc{sha: fmt.Sprintf("%x", tmpsha256b),
-									phit: tmp}
+								//tmpsha256 := sha256.Sum256([]byte(tmp.Curl()))
+								//curls[fmt.Sprintf("%x", tmpsha256)] = tmp.Curl()
+								binchan <- bindesc{url: tmp.GetBinurl(), phit: tmp}
 							} else {
-								tmpsha256 := sha256.Sum256([]byte(tmp.GetBody()))
-								bashchan <- bindesc{sha: fmt.Sprintf("%x", tmpsha256),
-									phit: tmp}
+								bashchan <- bindesc{url: tmp.GetBinurl(), phit: tmp}
 							}
 							// Create binary if not exist
 							query := `MATCH (bin` + tmp.GetBinaryMatchQuerySelector() + `) RETURN bin`
@@ -496,35 +494,41 @@ func writeBashs(bc chan bindesc, sortie chan os.Signal) error {
 	for {
 		select {
 		case v := <-bc:
-			fmt.Println("Received a new bash to write")
 			var err error
 			redisGR, err = redisPretensorPool.Dial()
 			if err != nil {
 				logger.Fatal("Could not connect routine to pretensor Redis")
 			}
 			graphGR := rg.GraphNew("pretensor", redisGR)
-			if _, ok := binurls[fmt.Sprintf("%x", v.sha)]; !ok {
+			if _, ok := bashs[v.url]; !ok {
+				if *debug {
+					logger.Println("Writing " + v.url)
+				}
 				// Set Sha 256 hash to the object
-				v.phit.SetSha256(v.sha)
+				tmpsha256 := sha256.Sum256([]byte(v.phit.GetBody()))
+				v.phit.SetSha256(fmt.Sprintf("%x", tmpsha256))
 				// Add binary's hash to the graph
 				query := `MATCH (b:Bot {ip:"` + v.phit.GetIp() + `"})
 				  MATCH (c:CC {host:"` + v.phit.GetHost() + `"})
 				  MERGE (bin:Binary ` + v.phit.GetBinaryMergeSelector() + `)
 				  MERGE (b)-[d:download {name: "download"}]->(bin)
 				  MERGE (c)-[h:host {name: "host"}]->(bin)`
-
-				fmt.Println(query)
 				result, err := graphGR.Query(query)
 				if err != nil {
 					logger.Println(err)
 				}
-				fmt.Println(result)
-				err = ioutil.WriteFile("./infected_bash/"+v.sha, []byte(v.phit.GetBody()), 0644)
+				if *debug {
+					logger.Println(query)
+					logger.Println(result)
+				}
+				err = ioutil.WriteFile("./infected_bash/"+v.phit.GetSha256(), []byte(v.phit.GetBody()), 0644)
 				if err != nil {
 					logger.Println(err)
 				}
 				// Update de binbash map
-				bashs[fmt.Sprintf("%x", v.sha)] = v.phit
+				bashs[v.phit.GetBinurl()] = v.phit
+			} else if *debug {
+				logger.Println("Skipping " + v.url)
 			}
 		case <-sortie:
 			return nil
@@ -540,9 +544,8 @@ downloading:
 	for {
 		select {
 		case vi := <-phitchan:
-			fmt.Println("Received a new binary to download")
 			// Check whether we already touched it
-			if _, ok := binurls[vi.sha]; !ok {
+			if _, ok := binurls[vi.url]; !ok {
 				//do something here
 				var err error
 				redisGR, err = redisPretensorPool.Dial()
@@ -550,7 +553,9 @@ downloading:
 					logger.Fatal("Could not connect routine to pretensor Redis")
 				}
 				graphGR := rg.GraphNew("pretensor", redisGR)
-				logger.Println("Fetching " + vi.phit.GetBinurl())
+				if *debug {
+					logger.Println("Fetching " + vi.url)
+				}
 				// create a socks5 dialer
 				dialer, err := proxy.SOCKS5("tcp", "127.0.0.1:9050", nil, proxy.Direct)
 				if err != nil {
@@ -577,10 +582,9 @@ downloading:
 				}
 
 				// update the binurls map
-				binurls[vi.sha] = vi.phit
-
+				binurls[vi.phit.GetBinurl()] = vi.phit
 				b, err := ioutil.ReadAll(resp.Body)
-				if err != nil || len(b) < 1{
+				if err != nil || len(b) < 1 {
 					logger.Println(os.Stderr, "error reading body:", err)
 					break downloading
 				}
@@ -594,21 +598,24 @@ downloading:
 				// Update the Go object with this sha
 				vi.phit.SetSha256(fmt.Sprintf("%x", tmpb))
 
-				fmt.Printf("Not empty, we Create a new relationship for: %v ", vi.phit.GetSha256())
+				//fmt.Printf("Not empty, we Create a new relationship for: %v ", vi.phit.GetSha256())
 				query := `MATCH (b:Bot {ip:"` + vi.phit.GetIp() + `"})
 								MATCH (c:CC {host:"` + vi.phit.GetHost() + `"})
-								MERGE (bin:Binary ` + vi.phit.GetBinaryMergeSelector() + `)
+								MATCH (bin:Binary ` + vi.phit.GetBinaryMatchQuerySelector() + `)
 								MERGE (b)-[d:download {name: "download"}]->(bin)
-								MERGE (c)-[h:host {name: "host"}]->(bin)`
-				fmt.Println(query)
-				logger.Println(query)
+								MERGE (c)-[h:host {name: "host"}]->(bin)
+								ON MATCH SET bin.sha256 = "` + vi.phit.GetSha256() + `"`
+
 				result, err := graphGR.Query(query)
-				logger.Println(result)
-				fmt.Println(result)
 				if err != nil {
 					fmt.Println(err)
 				}
-
+				if *debug {
+					logger.Println(query)
+					logger.Println(result)
+				}
+			} else if *debug {
+				logger.Println("Skipping " + vi.url)
 			}
 		case <-sortie:
 			return nil
