@@ -48,6 +48,7 @@ var (
 	confdir            = flag.String("c", "conf.sample", "configuration directory")
 	folder             = flag.String("log_folder", "logs", "folder containing mod security logs")
 	debug              = flag.Bool("d", false, "debug output")
+	delete              = flag.Bool("D", false, "Delete previous graph")
 	tmprate, _         = time.ParseDuration("5s")
 	rate               = flag.Duration("rl", tmprate, "Rate limiter: time in human format before retry after EOF")
 	buf                bytes.Buffer
@@ -82,6 +83,10 @@ func main() {
 	// Create infected folder if not exist
 	if _, err := os.Stat("infected"); os.IsNotExist(err) {
 		os.Mkdir("infected", 0750)
+	}
+	// Create infected_bash folder if not exist
+	if _, err := os.Stat("infected_bash"); os.IsNotExist(err) {
+		os.Mkdir("infected_bash", 0750)
 	}
 	defer f.Close()
 	logger.SetOutput(f)
@@ -207,7 +212,9 @@ func main() {
 
 	// Init redis graph
 	graph := rg.GraphNew("pretensor", redisConnPretensor)
-	graph.Delete()
+	if *delete{
+		graph.Delete()
+	}
 
 	// Create processing channels
 	binchan = make(chan bindesc, 2000)
@@ -512,7 +519,7 @@ func writeBashs(bc chan bindesc, sortie chan os.Signal) error {
 					logger.Println(err)
 				}
 				fmt.Println(result)
-				err = ioutil.WriteFile("./infected/"+v.sha, []byte(v.phit.GetBody()), 0644)
+				err = ioutil.WriteFile("./infected_bash/"+v.sha, []byte(v.phit.GetBody()), 0644)
 				if err != nil {
 					logger.Println(err)
 				}
@@ -563,19 +570,25 @@ downloading:
 				}
 				// use the http client to fetch the page
 				resp, err := httpClient.Do(req)
+				defer resp.Body.Close()
 				if err != nil {
 					logger.Println(os.Stderr, "can't GET page:", err)
 					break downloading
 				}
-				defer resp.Body.Close()
+
+				// update the binurls map
+				binurls[vi.sha] = vi.phit
+
 				b, err := ioutil.ReadAll(resp.Body)
-				if err != nil {
+				if err != nil || len(b) < 1{
 					logger.Println(os.Stderr, "error reading body:", err)
+					break downloading
 				}
 				tmpb := sha256.Sum256(b)
 				err = ioutil.WriteFile("./infected/"+fmt.Sprintf("%x", tmpb), b, 0644)
 				if err != nil {
 					logger.Println(err)
+					break downloading
 				}
 
 				// Update the Go object with this sha
@@ -596,8 +609,6 @@ downloading:
 					fmt.Println(err)
 				}
 
-				// update the binurls map
-				binurls[vi.sha] = vi.phit
 			}
 		case <-sortie:
 			return nil
