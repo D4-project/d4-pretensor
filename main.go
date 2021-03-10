@@ -514,11 +514,14 @@ func writeBashs(bc chan bindesc, sortie chan os.Signal) error {
 					tmpsha256 := sha256.Sum256([]byte(v.phit.GetBody()))
 					v.phit.SetSha256(fmt.Sprintf("%x", tmpsha256))
 					// Add binary's hash to the graph
+
 					query := `MATCH (b:Bot {ip:"` + v.phit.GetIp() + `"})
-				  MATCH (c:CC {host:"` + v.phit.GetHost() + `"})
-				  MERGE (bin:Binary ` + v.phit.GetBinaryMergeSelector() + `)
-				  MERGE (b)-[d:download {name: "download"}]->(bin)
-				  MERGE (c)-[h:host {name: "host"}]->(bin)`
+						MATCH (c:CC {host:"` + v.phit.GetHost() + `"})
+						MATCH (bin:Binary ` + v.phit.GetBinaryMatchQuerySelector() + `)
+						MERGE (b)-[d:download {name: "download"}]->(bin)
+						MERGE (c)-[h:host {name: "host"}]->(bin)
+						ON MATCH SET bin.sha256 = "` + v.phit.GetSha256() + `"`
+
 					result, err := graphGR.Query(query)
 					if err != nil {
 						logger.Println(err)
