@@ -15,14 +15,42 @@ import pdb
 r = redis.Redis(host='localhost', port=6502)
 redis_graph = Graph('pretensor', r)
 
+def setCCuuid(redisid, uuid):
+    query = """MATCH (c:CC)
+               WHERE id(c) = {}
+               SET c.uuid = "{}" """.format(redisid, uuid)
+    return redis_graph.query(query)
+
+def setBotuuid(redisid, uuid):
+    query = """MATCH (b:Bot)
+               WHERE id(b) = {}
+               SET b.uuid = "{}" """.format(redisid, uuid)
+    return redis_graph.query(query)
+
+def setBinaryuuid(redisid, uuid):
+    query = """MATCH (b:Binary)
+               WHERE id(b) = {}
+               SET b.uuid = "{}" """.format(redisid, uuid)
+    return redis_graph.query(query)
+
 def getBots():
-    query = """MATCH (b:Bot)-[:execute]->(:Command)
-               RETURN b.ip, b.lastseen, b.hostname, b.user, b.architecture, b.fingerprint"""
+    query = """MATCH (bot:Bot)
+               RETURN bot.ip, bot.user, bot.hostname, bot.lastseen, bot.arch, ID(bot)"""
     return redis_graph.query(query)
 
 def getCCs():
     query = """MATCH (c:CC)
-               RETURN c.host"""
+               RETURN c.host, ID(c)"""
+    return redis_graph.query(query)
+
+def getBinaries():
+    query = """MATCH (b:Binary)
+               RETURN b.sha256, b.binname, b.size, ID(b)"""
+    return redis_graph.query(query)
+
+def getExcutingBots():
+    query = """MATCH (b:Bot)-[:execute]->(:Command)
+               RETURN b.ip, b.lastseen, b.hostname, b.user, b.architecture, b.fingerprint"""
     return redis_graph.query(query)
 
 def getCCBots(host):
@@ -93,48 +121,53 @@ try:
 except:
     print("/!\ Connection fail, bad url ({0}) or API key : {1}".format(misp_url, misp_key))
 
-event = create_misp_event()
-# getBots().pretty_print()
+# event = create_misp_event()
+event = misp.get_event("63be3b31-153e-473c-be63-10a2df96f5e9", pythonify=True)
 
+# Add CCs
 ccs = getCCs()
 for record in ccs.result_set:
     torhs_object = MISPObject('tor-hiddenservice', standalone=False)
     torhs_object.add_attribute('address', value=record[0])
-    event.add_object(torhs_object)
-    record_bin = getCCBinaries(record[0])
-    # Add binaries
-    for bin in record_bin.result_set:
+    mycc = event.add_object(torhs_object, break_on_duplicate=True)
+    print(mycc.uuid)
+    setCCuuid(record[1], mycc.uuid)
+exit()
+# Add binaries
+bins = getBinaries()
+for bin in bins.result_set:
+    if len(bin[0]) > 0:
         # it's a binary
         if os.path.exists(os.path.join(infected_path, bin[0])):
             file_obj, bin_obj, sections = make_binary_objects(os.path.join(infected_path, bin[0]), standalone=False)
-            event.add_object(file_obj)
+            mybin = event.add_object(file_obj, break_on_duplicate=True)
+            setBinaryuuid(bin[3], mybin.uuid)
             if bin_obj:
-                event.add_object(bin_obj)
+                event.add_object(bin_obj, break_on_duplicate=True)
                 for s in sections:
-                    event.add_object(s)
-            # Create reference
-            torhs_object.add_reference(file_obj.uuid, "host")
+                    event.add_object(s, break_on_duplicate=True)
         # it's a bash file
         elif os.path.exists(os.path.join(infected_bash_path, bin[0])):
             shellcmd_object = MISPObject('shell-commands', standalone=False)
             shellcmd_object.add_attribute('language', value="Bash")
             with open(os.path.join(infected_bash_path, bin[0]), 'r') as reader:
                 shellcmd_object.add_attribute('script', value=reader.read())
-            event.add_object(shellcmd_object)
-            # Create reference
-            torhs_object.add_reference(shellcmd_object.uuid, "host")
-    # Add Bots
-    record_bots = getCCBots(record[0])
-    for bot in record_bots.result_set:
-        record_datetime = datetime.strptime(bot[3], '%d/%b/%Y:%H:%M:%S %z')
-        attributeAsDict = [{'node-ip': {'value': bot[0], 'type': 'ip-dst'}},
-                           {'node-user': {'value': bot[1], 'type': 'text'}},
-                           {'node-hostname': {'value': bot[2], 'type': 'text'}},
-                           {'first-seen': {'value': record_datetime, 'type': 'datetime'}},
-                           {'node-arch': {'value': bot[4], 'type': 'text'}}]
-        misp_object = GenericObjectGenerator('botnet-node')
-        misp_object.generate_attributes(attributeAsDict)
-        misp_object.add_reference(torhs_object.uuid, "reach")
-        event.add_object(misp_object)
+            mybash = event.add_object(shellcmd_object, break_on_duplicate=True)
+            setBinaryuuid(bin[3], mybash.uuid)
 
-push_event_to_misp(event)
+# Add Bots
+bots = getBots()
+for bot in bots.result_set:
+    record_datetime = datetime.strptime(bot[3], '%d/%b/%Y:%H:%M:%S %z')
+    attributeAsDict = [{'node-ip': {'value': bot[0], 'type': 'ip-dst'}},
+                       {'node-user': {'value': bot[1], 'type': 'text'}},
+                       {'node-hostname': {'value': bot[2], 'type': 'text'}},
+                       {'first-seen': {'value': record_datetime, 'type': 'datetime'}},
+                       {'node-arch': {'value': bot[4], 'type': 'text'}}]
+    misp_object = GenericObjectGenerator('botnet-node')
+    misp_object.generate_attributes(attributeAsDict)
+    mybot = event.add_object(misp_object, break_on_duplicate=True)
+    setBotuuid(bot[5], mybot.uuid)
+
+# push_event_to_misp(event)
+_ = misp.update_event(event)
