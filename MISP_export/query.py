@@ -113,7 +113,13 @@ try:
 except:
     print("/!\ Connection fail, bad url ({0}) or API key : {1}".format(misp_url, misp_key))
 
+# Extends Support Event
 event = create_misp_event()
+event = misp.add_event(event, pythonify=True)
+_ = misp.update_event({'extends_uuid': misp_event_uuid}, event_id= event.uuid, pythonify=True)
+event = misp.get_event(event.uuid, extended=True, pythonify=True)
+# Get the Support Event
+# extended = misp.get_event(misp_event_uuid, extended=True, pythonify=True)
 
 # Add CCs
 ccs = getCCs()
@@ -129,7 +135,7 @@ for bin in bins.result_set:
     if len(bin[0]) > 0:
         # it's a binary
         if os.path.exists(os.path.join(infected_path, bin[0])):
-            file_obj, bin_obj, sections = make_binary_objects(os.path.join(infected_path, bin[0]), standalone=False)
+            file_obj, bin_obj, sections = make_binary_objects(os.path.join(infected_path, bin[0]), standalone=False, filename=bin[1])
             mybin = event.add_object(file_obj, break_on_duplicate=True)
             setBinaryuuid(bin[3], mybin.uuid)
             if bin_obj:
@@ -160,26 +166,31 @@ for bot in bots.result_set:
     setBotuuid(bot[5], mybot.uuid)
 
 # Create Relationships
+# In order to keep the number of relationship low, we only keep links
+# between CC and binaries
 for obj in event.objects:
-    if obj.name == 'tor-hiddenservice':
-        ccbots = getCCBots(obj.uuid)
-        for bot in ccbots.result_set:
-            mispbot = event.get_object_by_uuid(bot[0])
-            mispbot.add_reference(obj.uuid, "reach")
-            misp.update_object(mispbot)
-    if obj.name == 'shell-commands':
-        binbots = getBinaryBots(obj.uuid)
+    # if obj.name == 'tor-hiddenservice':
+        # ccbots = getCCBots(obj.uuid)
+        # for bot in ccbots.result_set:
+        #     obj.add_reference(bot[0], "is_reached_by")
+        #     misp.update_object(obj)
+            # mispbot = event.get_object_by_uuid(bot[0])
+            # mispbot.add_reference(obj.uuid, "reach")
+            # misp.update_object(mispbot)
+    if (obj.name == 'shell-commands') or (obj.name == 'file'):
+        # binbots = getBinaryBots(obj.uuid)
         bincc = getBinaryCC(obj.uuid)
-        for bot in binbots.result_set:
-            mispbot = event.get_object_by_uuid(bot[0])
-            mispbot.add_reference(obj.uuid, "download")
-            misp.update_object(mispbot)
+        # for bot in binbots.result_set:
+        #     obj.add_reference(bot[0], "is_downloaded_by")
+        #     misp.update_object(obj)
+            # mispbot = event.get_object_by_uuid(bot[0])
+            # mispbot.add_reference(obj.uuid, "download")
+            # misp.update_object(mispbot)
         for bot in bincc.result_set:
-            mispbot = event.get_object_by_uuid(bot[0])
-            mispbot.add_reference(obj.uuid, "host")
-            misp.update_object(mispbot)
+            obj.add_reference(bot[0], "is_hosted_by")
+            misp.update_object(obj)
+            # mispbot = event.get_object_by_uuid(bot[0])
+            # mispbot.add_reference(obj.uuid, "host")
+            # misp.update_object(mispbot)
 
-# Extend existing event
-
-event = misp.add_event(event, pythonify=True)
-_ = misp.update_event({'extends_uuid': event.uuid }, event_id=misp_event_uuid, pythonify=True)
+_ = misp.update_event(event, pythonify=True)

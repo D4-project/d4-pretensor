@@ -3,4 +3,6 @@
 
 misp_url = 'https://127.0.0.1:8443/'
 misp_key = '' # The MISP auth key can be found on the MISP web interface under the automation section
-misp_verifycert = False
+misp_event_uuid = ''
+infected_path = '/home/babar/d4-pretensor/infected'
+infected_bash_path = '/home/babar/d4-pretensor/infected_bash'
