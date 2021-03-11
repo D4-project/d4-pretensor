@@ -8,13 +8,14 @@ from pymisp import MISPEvent
 from pymisp import MISPObject
 from pymisp.tools import GenericObjectGenerator
 from pymisp.tools import make_binary_objects
-from keys import misp_url, misp_key, infected_path, infected_bash_path
+from keys import misp_url, misp_key, infected_path, infected_bash_path, misp_event_uuid
 import pdb
 
 # TODO make these var config file settings
 r = redis.Redis(host='localhost', port=6502)
 redis_graph = Graph('pretensor', r)
 
+# Setter for MISP uuid in redisgraph
 def setCCuuid(redisid, uuid):
     query = """MATCH (c:CC)
                WHERE id(c) = {}
@@ -33,6 +34,7 @@ def setBinaryuuid(redisid, uuid):
                SET b.uuid = "{}" """.format(redisid, uuid)
     return redis_graph.query(query)
 
+# Getter for populating the MISP event with new nodes
 def getBots():
     query = """MATCH (bot:Bot)
                WHERE NOT EXISTS(bot.uuid) 
@@ -51,19 +53,26 @@ def getBinaries():
                RETURN b.sha256, b.binname, b.size, ID(b)"""
     return redis_graph.query(query)
 
-def getExcutingBots():
-    query = """MATCH (b:Bot)-[:execute]->(:Command)
-               RETURN b.ip, b.lastseen, b.hostname, b.user, b.architecture, b.fingerprint"""
-    return redis_graph.query(query)
-
+# Getter for building relationships
 def getCCBots(hostuuid):
     query = """MATCH (bot:Bot)-[:reach]-(c:CC {{uuid:"{}"}})
                RETURN bot.uuid""".format(hostuuid)
     return redis_graph.query(query)
 
-def getCCBinaries(host):
-    query = """MATCH (b:Binary)-[:host]-(c:CC {{host:"{}"}})
-               RETURN b.sha256, b.binname, b.size""".format(host)
+def getBinaryCC(uuid):
+    query = """MATCH (bin:Binary {{uuid: "{}"}})<-[h1:host]-(c1:CC)
+               RETURN c1.uuid""".format(uuid)
+    return redis_graph.query(query)
+
+def getBinaryBots(uuid):
+    query = """MATCH (bin:Binary {{uuid: "{}"}})<-[h1:downloas]-(b:Bot)
+               RETURN b.uuid""".format(uuid)
+    return redis_graph.query(query)
+
+# Parking of queries to build MISP reports
+def getExcutingBots():
+    query = """MATCH (b:Bot)-[:execute]->(:Command)
+               RETURN b.ip, b.lastseen, b.hostname, b.user, b.architecture, b.fingerprint"""
     return redis_graph.query(query)
 
 def getCCDLBots(host):
@@ -80,11 +89,6 @@ def getCCInfectedBots(host):
                RETURN bot.ip, bot.user, bot.hostname, bot.lastseen""".format(host)
     return redis_graph.query(query)
 
-def getBinaryCC(sha256):
-    query = """MATCH (bin:Binary {{sha256: "{}"}})<-[h1:host]-(c1:CC)
-               RETURN c1, bin""".format(sha256)
-    return redis_graph.query(query)
-
 def getBinarySiblings(sha256, depth):
     query = """MATCH (b1:Binary {{sha256: "{}"}})<-[:host]-(cc1:CC)-[:host]->(b2:Binary)
                WHERE b2.sha256 <> ""
@@ -93,39 +97,23 @@ def getBinarySiblings(sha256, depth):
                RETURN b2, commonCCs""".format(sha256, depth)
     return redis_graph.query(query)
 
-def getBinariesCCs():
-    query = """MATCH (bin:Binary)<-[h1:host]-(c1:CC)
-               RETURN c1, bin"""
-    return redis_graph.query(query)
-
 def misp_init(url, key):
         return PyMISP(url, key, False, 'json')
 
-
 def create_misp_event():
     event = MISPEvent()
-    event.info = "Correct way of doing this testouille event"
+    event.info = "Kinsing botnet update"
     event.analysis = 0
     event.date = time.strftime("%Y-%m-%d")
 
     return event
-
-def push_event_to_misp(event):
-        global misp
-        _ = misp.add_event(event)
-        return
-
-# Print resultset
-# getBinaryCC("fc888339e8cf0ad37a20f56acc247e374cbe960aeafb541fc374776c68a467f1").pretty_print()
-# getBinarySiblings("8dec3f18d8652bc68fbfcf516cb0bcabf259aaf61c65044d917bce9640be2db4", 10).pretty_print()
 
 try:
     misp = misp_init(misp_url, misp_key)
 except:
     print("/!\ Connection fail, bad url ({0}) or API key : {1}".format(misp_url, misp_key))
 
-# event = create_misp_event()
-event = misp.get_event("cae82159-5607-4cc1-b917-39d22698ac39", pythonify=True)
+event = create_misp_event()
 
 # Add CCs
 ccs = getCCs()
@@ -133,7 +121,6 @@ for record in ccs.result_set:
     torhs_object = MISPObject('tor-hiddenservice', standalone=False)
     torhs_object.add_attribute('address', value=record[0])
     mycc = event.add_object(torhs_object, break_on_duplicate=True)
-    print(mycc.uuid)
     setCCuuid(record[1], mycc.uuid)
 
 # Add binaries
@@ -180,6 +167,19 @@ for obj in event.objects:
             mispbot = event.get_object_by_uuid(bot[0])
             mispbot.add_reference(obj.uuid, "reach")
             misp.update_object(mispbot)
+    if obj.name == 'shell-commands':
+        binbots = getBinaryBots(obj.uuid)
+        bincc = getBinaryCC(obj.uuid)
+        for bot in binbots.result_set:
+            mispbot = event.get_object_by_uuid(bot[0])
+            mispbot.add_reference(obj.uuid, "download")
+            misp.update_object(mispbot)
+        for bot in bincc.result_set:
+            mispbot = event.get_object_by_uuid(bot[0])
+            mispbot.add_reference(obj.uuid, "host")
+            misp.update_object(mispbot)
 
-# push_event_to_misp(event)
-_ = misp.update_event(event)
+# Extend existing event
+
+event = misp.add_event(event, pythonify=True)
+_ = misp.update_event({'extends_uuid': event.uuid }, event_id=misp_event_uuid, pythonify=True)
