@@ -35,16 +35,19 @@ def setBinaryuuid(redisid, uuid):
 
 def getBots():
     query = """MATCH (bot:Bot)
+               WHERE NOT EXISTS(bot.uuid) 
                RETURN bot.ip, bot.user, bot.hostname, bot.lastseen, bot.arch, ID(bot)"""
     return redis_graph.query(query)
 
 def getCCs():
     query = """MATCH (c:CC)
+               WHERE NOT EXISTS(c.uuid) 
                RETURN c.host, ID(c)"""
     return redis_graph.query(query)
 
 def getBinaries():
     query = """MATCH (b:Binary)
+               WHERE NOT EXISTS(b.uuid) 
                RETURN b.sha256, b.binname, b.size, ID(b)"""
     return redis_graph.query(query)
 
@@ -53,9 +56,9 @@ def getExcutingBots():
                RETURN b.ip, b.lastseen, b.hostname, b.user, b.architecture, b.fingerprint"""
     return redis_graph.query(query)
 
-def getCCBots(host):
-    query = """MATCH (bot:Bot)-[:reach]-(c:CC {{host:"{}"}})
-               RETURN bot.ip, bot.user, bot.hostname, bot.lastseen, bot.arch""".format(host)
+def getCCBots(hostuuid):
+    query = """MATCH (bot:Bot)-[:reach]-(c:CC {{uuid:"{}"}})
+               RETURN bot.uuid""".format(hostuuid)
     return redis_graph.query(query)
 
 def getCCBinaries(host):
@@ -122,7 +125,7 @@ except:
     print("/!\ Connection fail, bad url ({0}) or API key : {1}".format(misp_url, misp_key))
 
 # event = create_misp_event()
-event = misp.get_event("63be3b31-153e-473c-be63-10a2df96f5e9", pythonify=True)
+event = misp.get_event("cae82159-5607-4cc1-b917-39d22698ac39", pythonify=True)
 
 # Add CCs
 ccs = getCCs()
@@ -132,7 +135,7 @@ for record in ccs.result_set:
     mycc = event.add_object(torhs_object, break_on_duplicate=True)
     print(mycc.uuid)
     setCCuuid(record[1], mycc.uuid)
-exit()
+
 # Add binaries
 bins = getBinaries()
 for bin in bins.result_set:
@@ -168,6 +171,15 @@ for bot in bots.result_set:
     misp_object.generate_attributes(attributeAsDict)
     mybot = event.add_object(misp_object, break_on_duplicate=True)
     setBotuuid(bot[5], mybot.uuid)
+
+# Create Relationships
+for obj in event.objects:
+    if obj.name == 'tor-hiddenservice':
+        ccbots = getCCBots(obj.uuid)
+        for bot in ccbots.result_set:
+            mispbot = event.get_object_by_uuid(bot[0])
+            mispbot.add_reference(obj.uuid, "reach")
+            misp.update_object(mispbot)
 
 # push_event_to_misp(event)
 _ = misp.update_event(event)
