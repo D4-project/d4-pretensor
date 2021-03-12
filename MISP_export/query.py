@@ -103,6 +103,7 @@ def misp_init(url, key):
 def create_misp_event():
     event = MISPEvent()
     event.info = "Kinsing botnet update"
+    event.tag = "TLP:Green"
     event.analysis = 0
     event.date = time.strftime("%Y-%m-%d")
 
@@ -156,33 +157,31 @@ bots = getBots()
 for bot in bots.result_set:
     record_datetime = datetime.strptime(bot[3], '%d/%b/%Y:%H:%M:%S %z')
     attributeAsDict = [{'node-ip': {'value': bot[0], 'type': 'ip-dst'}},
-                       {'node-user': {'value': bot[1], 'type': 'text'}},
+                       {'node-user': {'value': bot[1], 'type': 'text', 'to_ids': False, 'disable_correlation': True}},
                        {'node-hostname': {'value': bot[2], 'type': 'text'}},
-                       {'first-seen': {'value': record_datetime, 'type': 'datetime'}},
-                       {'node-arch': {'value': bot[4], 'type': 'text'}}]
+                       {'first-seen': {'value': record_datetime, 'type': 'datetime', 'to_ids': False, 'disable_correlation': True}},
+                       {'node-arch': {'value': bot[4], 'type': 'text', 'to_ids': False, 'disable_correlation': True}}]
     misp_object = GenericObjectGenerator('botnet-node')
     misp_object.generate_attributes(attributeAsDict)
     mybot = event.add_object(misp_object, break_on_duplicate=True)
     setBotuuid(bot[5], mybot.uuid)
 
 # Create Relationships
-# In order to keep the number of relationship low, we only keep links
-# between CC and binaries
 for obj in event.objects:
-    # if obj.name == 'tor-hiddenservice':
-        # ccbots = getCCBots(obj.uuid)
-        # for bot in ccbots.result_set:
-        #     obj.add_reference(bot[0], "is_reached_by")
-        #     misp.update_object(obj)
+    if obj.name == 'tor-hiddenservice':
+        ccbots = getCCBots(obj.uuid)
+        for bot in ccbots.result_set:
+            obj.add_reference(bot[0], "is_reached_by")
+            misp.update_object(obj)
             # mispbot = event.get_object_by_uuid(bot[0])
             # mispbot.add_reference(obj.uuid, "reach")
             # misp.update_object(mispbot)
     if (obj.name == 'shell-commands') or (obj.name == 'file'):
-        # binbots = getBinaryBots(obj.uuid)
+        binbots = getBinaryBots(obj.uuid)
         bincc = getBinaryCC(obj.uuid)
-        # for bot in binbots.result_set:
-        #     obj.add_reference(bot[0], "is_downloaded_by")
-        #     misp.update_object(obj)
+        for bot in binbots.result_set:
+            obj.add_reference(bot[0], "is_downloaded_by")
+            misp.update_object(obj)
             # mispbot = event.get_object_by_uuid(bot[0])
             # mispbot.add_reference(obj.uuid, "download")
             # misp.update_object(mispbot)
