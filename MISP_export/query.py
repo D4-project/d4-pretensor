@@ -98,7 +98,7 @@ def getBinarySiblings(sha256, depth):
     return redis_graph.query(query)
 
 def misp_init(url, key):
-        return PyMISP(url, key, False, 'json')
+        return PyMISP(url, key, ssl=False, debug=False)
 
 def create_misp_event():
     event = MISPEvent()
@@ -117,8 +117,8 @@ except:
 # Extends Support Event
 event = create_misp_event()
 event = misp.add_event(event, pythonify=True)
-_ = misp.update_event({'extends_uuid': misp_event_uuid}, event_id= event.uuid, pythonify=True)
-event = misp.get_event(event.uuid, extended=True, pythonify=True)
+evemt = misp.update_event({'extends_uuid': misp_event_uuid}, event_id= event.uuid, pythonify=True)
+# event = misp.get_event(event.uuid, extended=True, pythonify=True)
 # Get the Support Event
 # extended = misp.get_event(misp_event_uuid, extended=True, pythonify=True)
 
@@ -172,24 +172,18 @@ for obj in event.objects:
         ccbots = getCCBots(obj.uuid)
         for bot in ccbots.result_set:
             obj.add_reference(bot[0], "is_reached_by")
-            misp.update_object(obj)
             # mispbot = event.get_object_by_uuid(bot[0])
             # mispbot.add_reference(obj.uuid, "reach")
-            # misp.update_object(mispbot)
     if (obj.name == 'shell-commands') or (obj.name == 'file'):
         binbots = getBinaryBots(obj.uuid)
         bincc = getBinaryCC(obj.uuid)
         for bot in binbots.result_set:
             obj.add_reference(bot[0], "is_downloaded_by")
-            misp.update_object(obj)
             # mispbot = event.get_object_by_uuid(bot[0])
             # mispbot.add_reference(obj.uuid, "download")
-            # misp.update_object(mispbot)
-        for bot in bincc.result_set:
-            obj.add_reference(bot[0], "is_hosted_by")
-            misp.update_object(obj)
+        for cc in bincc.result_set:
+            obj.add_reference(cc[0], "is_hosted_by")
             # mispbot = event.get_object_by_uuid(bot[0])
             # mispbot.add_reference(obj.uuid, "host")
-            # misp.update_object(mispbot)
 
 _ = misp.update_event(event, pythonify=True)
