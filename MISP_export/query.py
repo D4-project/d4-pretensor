@@ -102,8 +102,9 @@ def misp_init(url, key):
 
 def create_misp_event():
     event = MISPEvent()
-    event.info = "Kinsing botnet update"
-    event.tag = "TLP:Green"
+    event.info = "Crypto mining botnet update"
+    event.tag = "tlp:green"
+    event.tag = "D4-onion-peeling"
     event.analysis = 0
     event.date = time.strftime("%Y-%m-%d")
 
