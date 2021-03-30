@@ -118,7 +118,7 @@ except:
 # Extends Support Event
 event = create_misp_event()
 event = misp.add_event(event, pythonify=True)
-evemt = misp.update_event({'extends_uuid': misp_event_uuid}, event_id= event.uuid, pythonify=True)
+event = misp.update_event({'extends_uuid': misp_event_uuid}, event_id= event.uuid, pythonify=True)
 # event = misp.get_event(event.uuid, extended=True, pythonify=True)
 # Get the Support Event
 # extended = misp.get_event(misp_event_uuid, extended=True, pythonify=True)
