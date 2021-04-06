@@ -361,7 +361,7 @@ func pretensorParse(filechan chan filedesc, sortie chan os.Signal, graph *rg.Gra
 
 						// Complete the graph
 						// Create bot if not exist
-						query := `MATCH (b:Bot {ip:"` + tmp.GetIp() + `"}) RETURN b.ip`
+						query := `MATCH (b:Bot {ip:"` + tmp.GetIp() + `"}) RETURN b.ip, b.firstseen, b.lastseen`
 						result, err := graph.Query(query)
 						if err != nil {
 							fmt.Println(err)
@@ -376,10 +376,34 @@ func pretensorParse(filechan chan filedesc, sortie chan os.Signal, graph *rg.Gra
 							if err != nil {
 								fmt.Println(err)
 							}
+							// Update Firstseen / Lastseen if already seen
+						} else {
+							result.Next()
+							r := result.Record()
+							fsstr, _ := r.Get("b.firstseen")
+							lsstr, _ := r.Get("b.lastseen")
+							fs, _ := time.Parse("02/Jan/2006:15:04:05 -0700", fmt.Sprint(fsstr))
+							ls, _ := time.Parse("02/Jan/2006:15:04:05 -0700", fmt.Sprint(lsstr))
+							if tmp.GetParsedTimeStamp().Before(fs) {
+								query = `MATCH (b:Bot {ip:"` + tmp.GetIp() + `"})
+								SET b.firstseen="` + tmp.GetTimestamp() + `"`
+								result, err = graph.Query(query)
+								if err != nil {
+									fmt.Println(err)
+								}
+							}
+							if tmp.GetParsedTimeStamp().After(ls) {
+								query = `MATCH (b:Bot {ip:"` + tmp.GetIp() + `"})
+								SET b.lastseen="` + tmp.GetTimestamp() + `"`
+								result, err = graph.Query(query)
+								if err != nil {
+									fmt.Println(err)
+								}
+							}
 						}
 
 						// Create CC if not exist
-						query = `MATCH (c:CC {host:"` + tmp.GetHost() + `"}) RETURN c.host`
+						query = `MATCH (c:CC {host:"` + tmp.GetHost() + `"}) RETURN c.host, c.firstseen, c.lastseen`
 						result, err = graph.Query(query)
 						if err != nil {
 							fmt.Println(err)
@@ -389,6 +413,30 @@ func pretensorParse(filechan chan filedesc, sortie chan os.Signal, graph *rg.Gra
 							_, err := graph.Flush()
 							if err != nil {
 								fmt.Println(err)
+							}
+							// Update Firstseen / Lastseen if already seen
+						} else {
+							result.Next()
+							r := result.Record()
+							fsstr, _ := r.Get("c.firstseen")
+							lsstr, _ := r.Get("c.lastseen")
+							fs, _ := time.Parse("02/Jan/2006:15:04:05 -0700", fmt.Sprint(fsstr))
+							ls, _ := time.Parse("02/Jan/2006:15:04:05 -0700", fmt.Sprint(lsstr))
+							if tmp.GetParsedTimeStamp().Before(fs) {
+								query = `MATCH (c:CC {host:"` + tmp.GetHost() + `"})
+								SET c.firstseen="` + tmp.GetTimestamp() + `"`
+								result, err = graph.Query(query)
+								if err != nil {
+									fmt.Println(err)
+								}
+							}
+							if tmp.GetParsedTimeStamp().After(ls) {
+								query = `MATCH (c:CC {host:"` + tmp.GetHost() + `"})
+								SET c.lastseen="` + tmp.GetTimestamp() + `"`
+								result, err = graph.Query(query)
+								if err != nil {
+									fmt.Println(err)
+								}
 							}
 						}
 

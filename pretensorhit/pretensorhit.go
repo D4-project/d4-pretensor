@@ -101,6 +101,10 @@ func (p *PHit) GetCmdArchitecture() string {
 	return p.cmd.arch
 }
 
+func (p *PHit) GetTimestamp() string {
+	return p.req.timestamp
+}
+
 func (p *PHit) SetTimestamp(in gj.Result) {
 	p.req.timestamp = in.String()
 	return
@@ -193,7 +197,7 @@ func (p *PHit) GetBinurl() string {
 	return str
 }
 
-func (p *PHit) getTimeStamp() time.Time {
+func (p *PHit) GetParsedTimeStamp() time.Time {
 	// "05/Nov/2020:16:30:10 +0100"
 	// Mon Jan 2 15:04:05 -0700 MST 2006
 	ts, _ := time.Parse("02/Jan/2006:15:04:05 -0700", p.req.timestamp)
@@ -205,6 +209,7 @@ func (p *PHit) GetBotNode() *rg.Node {
 		Label: "Bot",
 		Properties: map[string]interface{}{
 			"ip":       p.req.ip,
+			"firstseen": p.req.timestamp,
 			"lastseen": p.req.timestamp,
 		},
 	}
@@ -216,6 +221,8 @@ func (p *PHit) GetCCNode() *rg.Node {
 		Label: "CC",
 		Properties: map[string]interface{}{
 			"host": p.req.host,
+			"firstseen": p.req.timestamp,
+			"lastseen": p.req.timestamp,
 		},
 	}
 	return &p.g.cc
