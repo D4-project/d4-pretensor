@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
-	"errors"
 	"flag"
 	"fmt"
 	"github.com/D4-project/d4-pretensor/pretensorhit"
@@ -51,6 +50,7 @@ var (
 	debug              = flag.Bool("d", false, "debug output")
 	verbose            = flag.Bool("v", false, "additional debug output")
 	delete             = flag.Bool("D", false, "Delete previous graph")
+	d4                 = flag.Bool("r", false, "Connect to redis - d4 to get new files")
 	tmprate, _         = time.ParseDuration("5s")
 	rate               = flag.Duration("rl", tmprate, "Rate limiter: time in human format before retry after EOF")
 	buf                bytes.Buffer
@@ -165,33 +165,35 @@ func main() {
 		logger.Fatal("Could not connect to redis-pretensor Redis")
 	}
 
-	// Check redis-d4 configuration
 	rd4 := redisconf{}
-	// Parse Input Redis Config
-	tmp = config.ReadConfigFile(*confdir, "redis_d4")
-	ss = strings.Split(string(tmp), "/")
-	if len(ss) <= 1 {
-		logger.Println("Missing Database in redis_d4 input config: should be host:port/database_name -- Skipping")
-		checkredisd4 = false
-	} else {
-		rd4.databasename = ss[1]
-		ret, ss[0] = config.IsNet(ss[0])
-		if ret {
-			sss := strings.Split(string(ss[0]), ":")
-			rrg.redisHost = sss[0]
-			rrg.redisPort = sss[1]
+	if *d4 {
+		// Check redis-d4 configuration
+		// Parse Input Redis Config
+		tmp = config.ReadConfigFile(*confdir, "redis_d4")
+		ss = strings.Split(string(tmp), "/")
+		if len(ss) <= 1 {
+			logger.Println("Missing Database in redis_d4 input config: should be host:port/database_name -- Skipping")
+			checkredisd4 = false
 		} else {
-			logger.Fatal("Redis-d4 config error.")
-		}
-		// Create a new redis-graph connection pool
-		redisd4Pool = newPool(rrg.redisHost+":"+rrg.redisPort, 400)
-		redisConn, err = redisd4Pool.Dial()
-		if err != nil {
-			logger.Fatal("Could not connect to d4 Redis")
-		}
+			rd4.databasename = ss[1]
+			ret, ss[0] = config.IsNet(ss[0])
+			if ret {
+				sss := strings.Split(string(ss[0]), ":")
+				rrg.redisHost = sss[0]
+				rrg.redisPort = sss[1]
+			} else {
+				logger.Fatal("Redis-d4 config error.")
+			}
+			// Create a new redis-graph connection pool
+			redisd4Pool = newPool(rrg.redisHost+":"+rrg.redisPort, 400)
+			redisConn, err = redisd4Pool.Dial()
+			if err != nil {
+				logger.Fatal("Could not connect to d4 Redis")
+			}
 
-		// Get that the redis_d4_queue file
-		redisd4Queue = string(config.ReadConfigFile(*confdir, "redis_d4_queue"))
+			// Get that the redis_d4_queue file
+			redisd4Queue = string(config.ReadConfigFile(*confdir, "redis_d4_queue"))
+		}
 	}
 
 	// Checking that the log folder exists
@@ -220,7 +222,7 @@ func main() {
 
 	// Create processing channels
 	binchan = make(chan bindesc, 2000)
-	filechan = make(chan filedesc, 100000)
+	filechan = make(chan filedesc, 100000000)
 	bashchan = make(chan bindesc, 2000)
 
 	wg.Add(3)
@@ -245,7 +247,7 @@ func main() {
 			return nil
 		})
 
-	if checkredisd4 {
+	if checkredisd4 && *d4 {
 
 		redisConnD4, err := redisd4Pool.Dial()
 		if err != nil {
@@ -340,7 +342,8 @@ func pretensorParse(filechan chan filedesc, sortie chan os.Signal, graph *rg.Gra
 				// Load JSON
 				contents := string(content)
 				if !gj.Valid(contents) {
-					return errors.New("Invalid json: " + path)
+					logger.Println("Invalid json: " + path)
+					break
 				}
 				// For each request to monitor
 				for _, v := range tomonitor {
