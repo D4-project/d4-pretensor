@@ -76,6 +76,7 @@ var (
 )
 
 func main() {
+
 	// Setting up log file
 	f, err := os.OpenFile("pretensor.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
@@ -338,12 +339,17 @@ func pretensorParse(filechan chan filedesc, sortie chan os.Signal, graph *rg.Gra
 					return err
 				}
 				if len(content) == 0 {
-					return filepath.SkipDir
+					if *debug {
+						logger.Println("Empty File: " + path)
+					}
+					break
 				}
 				// Load JSON
 				contents := string(content)
 				if !gj.Valid(contents) {
-					logger.Println("Invalid json: " + path)
+					if *debug {
+						logger.Println("Invalid json: " + path)
+					}
 					break
 				}
 				// For each request to monitor
