@@ -8,13 +8,13 @@ import (
 	"github.com/D4-project/d4-pretensor/pretensorhit"
 	"golang.org/x/net/proxy"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -198,7 +198,7 @@ func main() {
 
 	// Checking that the log folder exists
 	log_folder := string(config.ReadConfigFile(*confdir, "folder"))
-	_, err = ioutil.ReadDir(log_folder)
+	_, err = os.ReadDir(log_folder)
 	if err != nil {
 		logger.Println(err)
 		walk_folder = false
@@ -222,8 +222,9 @@ func main() {
 
 	// Create processing channels
 	binchan = make(chan bindesc, 2000)
-	filechan = make(chan filedesc, 100000000)
 	bashchan = make(chan bindesc, 2000)
+	// Unbuffered channel for the parser
+	filechan = make(chan filedesc)
 
 	wg.Add(3)
 	// Launch the download routine
@@ -332,7 +333,7 @@ func pretensorParse(filechan chan filedesc, sortie chan os.Signal, graph *rg.Gra
 			info := file.info
 			path := file.path
 			if !info.IsDir() {
-				content, err := ioutil.ReadFile(path)
+				content, err := os.ReadFile(path)
 				if err != nil {
 					return err
 				}
@@ -561,7 +562,7 @@ func writeBashs(bc chan bindesc, sortie chan os.Signal) error {
 					logger.Println("Writing " + v.url)
 				}
 				// Set Sha 256 hash to the object
-				if len(v.phit.GetBody()) > 0 {
+				if s, err := strconv.Atoi(v.phit.GetLength()); err == nil && s > 0 {
 					tmpsha256 := sha256.Sum256([]byte(v.phit.GetBody()))
 					v.phit.SetSha256(fmt.Sprintf("%x", tmpsha256))
 					// Add binary's hash to the graph
@@ -581,7 +582,7 @@ func writeBashs(bc chan bindesc, sortie chan os.Signal) error {
 						logger.Println(query)
 						logger.Println(result)
 					}
-					err = ioutil.WriteFile("./infected_bash/"+v.phit.GetSha256(), []byte(v.phit.GetBody()), 0644)
+					err = os.WriteFile("./infected_bash/"+v.phit.GetSha256(), []byte(v.phit.GetBody()), 0644)
 					if err != nil {
 						logger.Println(err)
 					}
@@ -589,7 +590,7 @@ func writeBashs(bc chan bindesc, sortie chan os.Signal) error {
 				// Update de binbash map
 				bashs[v.phit.GetBinurl()] = v.phit
 			} else if *debug {
-				logger.Println("Skipping " + v.url)
+				logger.Println("Skipping bash " + v.url)
 			}
 		case <-sortie:
 			return nil
@@ -646,13 +647,13 @@ downloading:
 
 				// update the binurls map
 				binurls[vi.phit.GetBinurl()] = vi.phit
-				b, err := ioutil.ReadAll(resp.Body)
+				b, err := io.ReadAll(resp.Body)
 				if err != nil || len(b) < 1 {
 					logger.Println("error reading body:", err)
 					break downloading
 				}
 				tmpb := sha256.Sum256(b)
-				err = ioutil.WriteFile("./infected/"+fmt.Sprintf("%x", tmpb), b, 0644)
+				err = os.WriteFile("./infected/"+fmt.Sprintf("%x", tmpb), b, 0644)
 				if err != nil {
 					logger.Println(err)
 					break downloading
