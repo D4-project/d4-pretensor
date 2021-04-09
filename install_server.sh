@@ -15,7 +15,7 @@ go build
 mkdir -p db
 test ! -d redis/ && git clone https://github.com/antirez/redis.git
 pushd redis/
-git checkout 5.0
+git checkout 6.0
 make
 popd
 

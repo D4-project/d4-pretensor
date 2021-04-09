@@ -16,4 +16,8 @@ screen -S "pretensor" -X screen -t "pew-redis" bash -c "(${DIR}/redis/src/redis-
 
 sleep 0.5
 
+redis-cli -h localhost -p 6502 -n 0 GRAPH.QUERY pretensor "CALL db.idx.fulltext.createNodeIndex('Bot', 'firstseen')"
+redis-cli -h localhost -p 6502 -n 0 GRAPH.QUERY pretensor "CALL db.idx.fulltext.createNodeIndex('Bot', 'hostname')"
+redis-cli -h localhost -p 6502 -n 0 GRAPH.QUERY pretensor "CALL db.idx.fulltext.createNodeIndex('CC', 'firstseen')"
+
 exit 0
