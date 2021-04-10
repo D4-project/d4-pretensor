@@ -6,3 +6,4 @@ misp_key = '' # The MISP auth key can be found on the MISP web interface under t
 misp_event_uuid = ''
 infected_path = '/home/babar/d4-pretensor/infected'
 infected_bash_path = '/home/babar/d4-pretensor/infected_bash'
+event_name = "Crypomining Botnet event update"
