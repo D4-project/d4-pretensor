@@ -52,10 +52,9 @@ for record in ccs.result_set:
 
 # Add binaries
 bins = redis_graph.query(getBinaries())
-if len(bins.result_set) > 0:
-    modified = True
 for bin in bins.result_set:
     if len(bin[0]) > 0:
+        modified = True
         # it's a binary
         if os.path.exists(os.path.join(infected_path, bin[0])):
             file_obj, bin_obj, sections = make_binary_objects(os.path.join(infected_path, bin[0]), standalone=False,
