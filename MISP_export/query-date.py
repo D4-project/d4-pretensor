@@ -9,7 +9,7 @@ from pymisp.tools import GenericObjectGenerator
 from pymisp.tools import make_binary_objects
 from lib import setCCuuid, getCCs, getBinaries, setBinaryuuid, setBotuuid, getBotsForDate, getCCBots, getBinaryCC, \
     getBotCCs
-from keys import misp_url, misp_key, infected_path, infected_bash_path, misp_event_uuid
+from keys import misp_url, misp_key, infected_path, infected_bash_path, misp_event_uuid, event_name
 
 r = redis.Redis(host='localhost', port=6502)
 redis_graph = Graph('pretensor', r)
@@ -21,7 +21,7 @@ def misp_init(url, key):
 
 def create_misp_event(date):
     event = MISPEvent()
-    event.info = "PGMiner event update"
+    event.info = event_name
     event.tag = "tlp:green"
     event.tag = "D4-onion-peeling"
     event.analysis = 0
