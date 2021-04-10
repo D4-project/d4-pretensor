@@ -35,10 +35,13 @@ except:
     print("/!\ Connection fail, bad url ({0}) or API key : {1}".format(misp_url, misp_key))
 
 supportEvent = misp.get_event(misp_event_uuid, extended=True, pythonify=True)
+modified = False
 
 # C2 and binary are located in the support event
 # Add CCs
 ccs = redis_graph.query(getCCs())
+if len(ccs.result_set) > 0:
+    modified = True
 for record in ccs.result_set:
     torhs_object = MISPObject('tor-hiddenservice', standalone=False)
     torhs_object.add_attribute('address', value=record[0])
@@ -49,6 +52,8 @@ for record in ccs.result_set:
 
 # Add binaries
 bins = redis_graph.query(getBinaries())
+if len(bins.result_set) > 0:
+    modified = True
 for bin in bins.result_set:
     if len(bin[0]) > 0:
         # it's a binary
@@ -83,14 +88,15 @@ for bin in bins.result_set:
                         supportEvent.add_object(s, break_on_duplicate=True)
 
 # Create relationships in the support event
-for obj in supportEvent.objects:
-    if (obj.name == 'shell-commands') or (obj.name == 'file'):
-        bincc = redis_graph.query(getBinaryCC(obj.uuid))
-        for cc in bincc.result_set:
-            obj.add_reference(cc[0], "is_hosted_by")
+if modified:
+    for obj in supportEvent.objects:
+        if (obj.name == 'shell-commands') or (obj.name == 'file'):
+            bincc = redis_graph.query(getBinaryCC(obj.uuid))
+            for cc in bincc.result_set:
+                obj.add_reference(cc[0], "is_hosted_by")
 
-# Update the support event
-supportEvent = misp.update_event(supportEvent, pythonify=True)
+    # Update the support event
+    supportEvent = misp.update_event(supportEvent, pythonify=True)
 
 # Create extended daily events for bots
 sdate = date(2020, 10, 20)  # start date
