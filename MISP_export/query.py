@@ -42,7 +42,7 @@ for record in ccs.result_set:
     torhs_object.add_attribute('first-seen', value=datetime.strptime(record[1], "%d/%b/%Y:%H:%M:%S %z"))
     torhs_object.add_attribute('last-seen', value=datetime.strptime(record[2], "%d/%b/%Y:%H:%M:%S %z"))
     mycc = supportEvent.add_object(torhs_object, break_on_duplicate=True)
-    setCCuuid(record[3], mycc.uuid, supportEvent.uuid)
+    redis_graph.query(setCCuuid(record[3], mycc.uuid, supportEvent.uuid))
 
 # Add binaries
 bins = redis_graph.query(getBinaries())
@@ -52,7 +52,7 @@ for bin in bins.result_set:
         if os.path.exists(os.path.join(infected_path, bin[0])):
             file_obj, bin_obj, sections = make_binary_objects(os.path.join(infected_path, bin[0]), standalone=False, filename=bin[1])
             mybin = supportEvent.add_object(file_obj, break_on_duplicate=True)
-            setBinaryuuid(bin[3], mybin.uuid)
+            redis_graph.query(setBinaryuuid(bin[3], mybin.uuid))
             if bin_obj:
                 supportEvent.add_object(bin_obj, break_on_duplicate=True)
                 for s in sections:
@@ -65,13 +65,13 @@ for bin in bins.result_set:
                 with open(os.path.join(infected_bash_path, bin[0]), 'r') as reader:
                     shellcmd_object.add_attribute('script', value=reader.read())
                     mybash = supportEvent.add_object(shellcmd_object, break_on_duplicate=True)
-                    setBinaryuuid(bin[3], mybash.uuid)
+                    redis_graph.query(setBinaryuuid(bin[3], mybash.uuid))
                     # sonovabitch is actually a binary
             except UnicodeDecodeError:
                 file_obj, bin_obj, sections = make_binary_objects(os.path.join(infected_bash_path, bin[0]), standalone=False,
                                                                   filename=bin[1])
                 mybin = supportEvent.add_object(file_obj, break_on_duplicate=True)
-                setBinaryuuid(bin[3], mybin.uuid)
+                redis_graph.query(setBinaryuuid(bin[3], mybin.uuid))
                 if bin_obj:
                     supportEvent.add_object(bin_obj, break_on_duplicate=True)
                     for s in sections:
@@ -110,6 +110,6 @@ for bot in bots.result_set:
     for cc in botcc.result_set:
         misp_object.add_reference(cc[0], "reaches")
     mybot = event.add_object(misp_object, break_on_duplicate=True)
-    setBotuuid(bot[6], mybot.uuid, event.uuid)
+    redis_graph.query(setBotuuid(bot[6], mybot.uuid, event.uuid))
 
 _ = misp.update_event(event, pythonify=True)
