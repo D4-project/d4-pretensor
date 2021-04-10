@@ -13,6 +13,7 @@ screen -dmS "pretensor"
 sleep 0.1
 
 screen -S "pretensor" -X screen -t "pew-redis" bash -c "(${DIR}/redis/src/redis-server ${DIR}/redis.conf); read x;"
+#screen -S "pretensor" -X screen -t "redis-insight" bash -c "(${DIR}/redisinsight-linux64-1.10.0); read x;"
 
 sleep 0.5
 
