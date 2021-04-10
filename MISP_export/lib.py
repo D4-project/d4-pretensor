@@ -1,15 +1,3 @@
-import redis
-import os
-import time
-from datetime import datetime, timedelta, date
-from redisgraph import Node, Edge, Graph, Path
-from redisearch import Client
-from pymisp import PyMISP
-from pymisp import MISPEvent
-from pymisp import MISPObject
-from pymisp.tools import GenericObjectGenerator
-from pymisp.tools import make_binary_objects
-
 # Setter for MISP uuid in redisgraph
 def setCCuuid(redisid, uuid, muuid):
     query = """MATCH (c:CC)
