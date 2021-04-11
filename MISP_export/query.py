@@ -1,14 +1,14 @@
 import redis
 import os
 import time
-from datetime import datetime, timedelta, date
-from redisgraph import Node, Edge, Graph, Path
+from datetime import datetime
+from redisgraph import Graph
 from pymisp import PyMISP
 from pymisp import MISPEvent
 from pymisp import MISPObject
 from pymisp.tools import GenericObjectGenerator
 from pymisp.tools import make_binary_objects
-from lib import setCCuuid, getCCs, getBinaries, setBinaryuuid, setBotuuid, getBotsForDate, getCCBots, getBinaryCC, getBotCCs, getBots
+from lib import setCCuuid, getCCs, getBinaries, setBinaryuuid, setBotuuid, getBinaryCC, getBotCCs, getBots
 from keys import misp_url, misp_key, infected_path, infected_bash_path, misp_event_uuid, event_name
 
 r = redis.Redis(host='localhost', port=6502)
