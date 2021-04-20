@@ -1,5 +1,6 @@
 d4-pretensor
 redisgraph.so
+redisearch.so
 /db
 /redis
 .pretensor.log
