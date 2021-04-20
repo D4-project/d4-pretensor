@@ -1,6 +1,10 @@
 # d4-pretensor
-`d4-pretensor` is a tool used support the monitor of http <> tor gateways. 
-Here are its main current features:
+`d4-pretensor` is a tool used support the monitoring of http <> tor proxies:
+
+![torgateway](https://user-images.githubusercontent.com/329725/115405462-8aecdf80-a1ee-11eb-9372-fa354219838d.png)
+
+
+d4-pretensor is used to perform the following:
 
 - analyze logs modsecurity log files from a folder, or straight from D4
 - re-download binary files downloaded by clients
